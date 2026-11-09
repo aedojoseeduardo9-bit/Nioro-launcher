@@ -107,6 +107,11 @@ object Prefs {
     fun setHomeKeys(v: List<String>) = putList("homeKeys", v)
     fun dockKeys(): MutableList<String> = getList("dockKeys")
     fun setDockKeys(v: List<String>) = putList("dockKeys", v)
+    /** orden que el usuario eligió en la vista Playlist (arrastrando las apps) */
+    fun playlistOrder(): MutableList<String> = getList("playlistOrder")
+    fun setPlaylistOrder(v: List<String>) = putList("playlistOrder", v)
+    /** Playlist: true = en el orden propio, false = A-Z */
+    var playlistMine by BoolPref("playlistMine", true)
     fun hidden(): MutableList<String> = getList("hidden")
     fun setHidden(v: List<String>) = putList("hidden", v)
     fun knownKeys(): MutableList<String> = getList("knownKeys")

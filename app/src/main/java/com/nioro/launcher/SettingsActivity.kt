@@ -51,13 +51,16 @@ class SettingsActivity : Activity() {
         val BOUNCE = arrayOf("Salto", "Pulso", "Giro", "Ola", "Sacudir")
         val PAGE = arrayOf("Plana", "Cubo", "Cascada", "Zoom", "Carrusel")
         val RECENTS = arrayOf("Carrusel", "Pila 3D", "Cover Flow", "Rejilla", "Burbujas")
-        val DRAWER = arrayOf("Launchpad", "Abanico", "Rejilla", "Lista", "Gravedad")
+        val DRAWER = arrayOf("Launchpad", "Abanico", "Rejilla", "Lista", "Gravedad", "Playlist", "Panal", "Rueda")
         val DRAWER_DESC = arrayOf(
             "Páginas a pantalla completa, como el Launchpad del Mac",
             "Los iconos salen del dock en curva",
             "Panel de cristal flotante sobre el dock",
             "Lista alfabética con índice A‑Z",
-            "Los iconos caen como esferas con física real"
+            "Los iconos caen como esferas con física real",
+            "Como una lista de Spotify: mantén una app para moverla y deslízala a la derecha para añadirla al inicio",
+            "Un panal que mueves con el dedo, como el reloj de Apple: las del centro se ven grandes",
+            "Una rueda que giras con el dedo, como un iPod: avanza con un clic en cada app"
         )
         // el número de cada diseño es su posición: 2 = sin reloj; los nuevos van al final
         val CLOCK = arrayOf(

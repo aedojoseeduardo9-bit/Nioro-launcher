@@ -27,6 +27,8 @@ abstract class AppsView(ctx: Context) : View(ctx) {
         fun onTouchStart()
         /** cuánto se está tirando para cerrar (0..1): el fondo y la barra responden al dedo */
         fun onPull(k: Float) {}
+        /** deslizar una app (Playlist): añadirla al inicio */
+        fun onAddHome(e: AppEntry) {}
     }
 
     var listener: Listener? = null

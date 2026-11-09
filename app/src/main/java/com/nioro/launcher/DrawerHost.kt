@@ -32,6 +32,8 @@ class DrawerHost(ctx: Context) : FrameLayout(ctx) {
         fun onClosed()
         fun dismissMenu()
         fun openSettings()
+        /** añadir una app al inicio desde la vista de apps (gesto de la Playlist) */
+        fun onAddHome(e: AppEntry) {}
     }
 
     var callback: Callback? = null
@@ -228,6 +230,9 @@ class DrawerHost(ctx: Context) : FrameLayout(ctx) {
             2 -> GridPopupView(context)
             3 -> ListAppsView(context)
             4 -> GravityView(context)
+            5 -> PlaylistView(context)
+            6 -> HoneyView(context)
+            7 -> WheelView(context)
             else -> LaunchpadView(context)
         }
         viewStyle = st
@@ -247,6 +252,7 @@ class DrawerHost(ctx: Context) : FrameLayout(ctx) {
                 pullK = k
                 applyProgress()
             }
+            override fun onAddHome(e: AppEntry) { callback?.onAddHome(e) }
         }
         addView(v, 0, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         if (search.parent == null) {

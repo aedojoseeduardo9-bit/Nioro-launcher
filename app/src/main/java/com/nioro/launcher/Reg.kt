@@ -326,7 +326,10 @@ object S {
     const val IA_LIST = 5
     const val IA_GRAVITY = 6
     const val IA_RECENTS = 7
-    val IA_NAMES = arrayOf("Inicio", "Dock", "Launchpad", "Abanico", "Rejilla", "Lista", "Gravedad", "Recientes")
+    const val IA_PLAYLIST = 8
+    const val IA_HONEY = 9
+    const val IA_WHEEL = 10
+    val IA_NAMES = arrayOf("Inicio", "Dock", "Launchpad", "Abanico", "Rejilla", "Lista", "Gravedad", "Recientes", "Playlist", "Panal", "Rueda")
     const val IP_SCALE = 0
     const val IP_OPACITY = 1
     const val IP_SHADOW = 2
