@@ -1,0 +1,61 @@
+name: Capturas
+
+# Abre el launcher en un Android virtual y publica capturas en el release "capturas"
+# (para revisar el diseño sin tener el móvil a mano).
+on:
+  push:
+    branches-ignore: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# una sola ronda a la vez: la nueva cancela la anterior (si no, se borran las capturas entre sí)
+concurrency:
+  group: capturas
+  cancel-in-progress: true
+
+jobs:
+  screens:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: 8.7
+      - name: Aceptar licencias del SDK
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+      - name: Compilar (debug)
+        run: gradle :app:assembleDebug --no-daemon --stacktrace
+      - name: Instalar ffmpeg (vídeos de las animaciones)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null
+      - name: Activar KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Capturas en un Android virtual
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: default
+          arch: x86_64
+          profile: pixel_5
+          disable-animations: false
+          ram-size: 4096M
+          heap-size: 512M
+          script: bash ci/screens.sh
+      - name: Publicar capturas
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          [ -f shots/report.txt ] || { mkdir -p shots; echo "Sin informe" > shots/report.txt; }
+          gh release delete capturas --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
+          gh release create capturas --repo "$GITHUB_REPOSITORY" --title "Capturas" --notes "Capturas automáticas de ${GITHUB_SHA::7}" --prerelease || true
+          for f in shots/*.png shots/*.txt; do gh release upload capturas "$f" --clobber --repo "$GITHUB_REPOSITORY" || true; done

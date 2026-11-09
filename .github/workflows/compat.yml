@@ -1,0 +1,83 @@
+name: Compatibilidad
+
+# Prueba el launcher en varios Android virtuales (versiones 10 a 14 y pantallas pequeñas y grandes)
+# y publica el informe en el release "compatibilidad". Así se cazan cierres de otras marcas y modelos.
+on:
+  push:
+    branches-ignore: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: compatibilidad
+  cancel-in-progress: false
+
+jobs:
+  probar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { api: 29, perfil: pixel_2, nombre: android10_pantalla_pequena, imagen: default, ram: 2048M }
+          - { api: 31, perfil: pixel_3a, nombre: android12, imagen: default, ram: 2048M }
+          - { api: 33, perfil: pixel_5, nombre: android13, imagen: google_apis, ram: 4096M }
+          - { api: 34, perfil: pixel_4, nombre: android14, imagen: google_apis, ram: 4096M }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: 8.7
+      - name: Aceptar licencias del SDK
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+      - name: Compilar (debug)
+        run: gradle :app:assembleDebug --no-daemon
+      - name: Activar KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Probar en Android ${{ matrix.api }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          target: ${{ matrix.imagen }}
+          arch: x86_64
+          profile: ${{ matrix.perfil }}
+          disable-animations: false
+          ram-size: ${{ matrix.ram }}
+          cores: 2
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          script: bash ci/compat.sh ${{ matrix.nombre }}
+      - name: Guardar informe
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.nombre }}
+          path: compat/
+
+  publicar:
+    needs: probar
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: compat
+          merge-multiple: true
+      - name: Publicar informes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p compat
+          ls compat/*.txt > /dev/null 2>&1 || echo "Sin informes" > compat/sin_informes.txt
+          gh release delete compatibilidad --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
+          gh release create compatibilidad --repo "$GITHUB_REPOSITORY" --title "Compatibilidad" --notes "Pruebas en varios Android de ${GITHUB_SHA::7}" --prerelease || true
+          for f in compat/*.png compat/*.txt; do gh release upload compatibilidad "$f" --clobber --repo "$GITHUB_REPOSITORY" || true; done
