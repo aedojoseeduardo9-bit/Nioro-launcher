@@ -12,7 +12,10 @@ android {
         minSdk = 29
         targetSdk = 34
         // Cada compilación de GitHub Actions sube el número: así el actualizador sabe si hay versión nueva.
-        val run = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
+        // +43: el proyecto se mudó de cuenta y el contador de GitHub volvió a empezar; con la suma, las
+        // versiones nuevas siguen por encima de la 1.43 que ya estaba instalada (si no, nunca se actualizaría
+        // y Android rechazaría instalar un número menor). Debe coincidir con VERSION_OFFSET de build.yml.
+        val run = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt() + 43
         versionCode = run
         versionName = "1.$run"
     }

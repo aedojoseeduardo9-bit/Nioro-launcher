@@ -58,9 +58,10 @@ object IconFx {
     private val halo = Paint(Paint.ANTI_ALIAS_FLAG)
     private val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = Color.WHITE }
     private val dst = RectF()
-    private val filters = arrayOfNulls<ColorMatrixColorFilter>(8)
-    private val filterVer = IntArray(8) { -1 }
-    private val filterNone = BooleanArray(8)
+    // una entrada por zona de iconos (S.IA_*): con zonas nuevas el tamaño crece solo (antes era 8 fijo)
+    private val filters = arrayOfNulls<ColorMatrixColorFilter>(S.IA_NAMES.size)
+    private val filterVer = IntArray(S.IA_NAMES.size) { -1 }
+    private val filterNone = BooleanArray(S.IA_NAMES.size)
     private val paths = HashMap<Int, Path>()
     private var pathShape = -1
     /** forma del icono a tamaño 100 para el oscurecido al tocar (se escala con el lienzo) */

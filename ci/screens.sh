@@ -92,6 +92,19 @@ hold() { timeout 20 adb shell input swipe "$1" "$2" "$1" "$2" 1300; }
   g_estallar() { timeout 20 adb shell input tap 930 2070; sleep 2; timeout 20 adb shell input swipe 330 1382 330 1382 1100; }
   RECIENTES=4 prefs 0; start; REC_S=6 FPS=5 rec v12_burbujas_arrastrar g_burbujas; back
   RECIENTES=4 prefs 0; start; REC_S=8 FPS=4 rec v13_burbujas_estallar g_estallar; back
+  # vistas de apps nuevas: Playlist (5), Panal (6) y Rueda (7)
+  prefs 5; start; swipe_up; shot 40_playlist 3
+  g_pl_mover() { timeout 10 adb shell input motionevent DOWN 540 1047; sleep 1; for yy in 1110 1180 1260 1340 1420 1500; do timeout 10 adb shell input motionevent MOVE 540 $yy; done; timeout 10 adb shell input motionevent UP 540 1500; }
+  REC_S=6 FPS=5 rec v14_playlist_mover g_pl_mover; back
+  prefs 5; start; swipe_up; sleep 2
+  g_pl_deslizar() { timeout 20 adb shell input swipe 200 1223 800 1223 900; }
+  REC_S=4 rec v15_playlist_deslizar g_pl_deslizar; back
+  prefs 6; start; swipe_up; shot 41_panal 3
+  g_panal() { timeout 20 adb shell input swipe 700 1500 300 900 220; }
+  REC_S=4 rec v16_panal g_panal; back
+  prefs 7; start; swipe_up; shot 42_rueda 3
+  g_rueda() { timeout 20 adb shell input swipe 950 1720 150 1720 260; }
+  REC_S=4 rec v17_rueda g_rueda; back
   # Ajustes: portada y galería de diseños del dock
   prefs 0; timeout 60 adb shell am start -W -n $P/.SettingsActivity > /dev/null 2>&1; sleep 5; shot 30_ajustes 1
   timeout 20 adb shell input swipe 540 1800 540 600 400; sleep 2; shot 31_ajustes_abajo 1

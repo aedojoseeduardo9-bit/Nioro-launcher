@@ -455,7 +455,7 @@ class MainActivity : Activity() {
                 Toast.makeText(this, if (Prefs.saver) "Modo ahorro activado" else "Modo ahorro desactivado", Toast.LENGTH_SHORT).show()
             }
             S.A_NEXT_VIEW -> {
-                Prefs.drawerStyle = (Prefs.drawerStyle + 1) % 5
+                Prefs.drawerStyle = (Prefs.drawerStyle + 1) % SettingsActivity.DRAWER.size
                 drawer.styleChanged()
                 Toast.makeText(this, "Vista: " + SettingsActivity.DRAWER[Prefs.drawerStyle], Toast.LENGTH_SHORT).show()
             }
@@ -490,7 +490,7 @@ class MainActivity : Activity() {
             }
         })
         items.add(MenuView.Item("Vista de apps: siguiente estilo", Glyphs.GRID) {
-            Prefs.drawerStyle = (Prefs.drawerStyle + 1) % 5
+            Prefs.drawerStyle = (Prefs.drawerStyle + 1) % SettingsActivity.DRAWER.size
             drawer.styleChanged()
             Toast.makeText(this, "Vista: " + SettingsActivity.DRAWER[Prefs.drawerStyle], Toast.LENGTH_SHORT).show()
         })
@@ -594,6 +594,17 @@ class MainActivity : Activity() {
             updateBackdrop()
         }
         override fun dismissMenu() = menu.dismiss()
+        override fun onAddHome(e: AppEntry) {
+            val h = Prefs.homeKeys()
+            if (e.key in h || e.key in Prefs.dockKeys()) {
+                Toast.makeText(this@MainActivity, e.label + " ya está en el inicio", Toast.LENGTH_SHORT).show()
+                return
+            }
+            HomeSlots.add(h, e.key)
+            Prefs.setHomeKeys(h)
+            home.reload()
+            Toast.makeText(this@MainActivity, e.label + " añadida al inicio", Toast.LENGTH_SHORT).show()
+        }
         override fun openSettings() {
             startActivity(Intent(this@MainActivity, SettingsActivity::class.java))
             @Suppress("DEPRECATION")
