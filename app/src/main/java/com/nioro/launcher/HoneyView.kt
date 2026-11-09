@@ -45,6 +45,18 @@ class HoneyView(ctx: Context) : AppsView(ctx) {
     private var focusIdx = -1
     private val labelPaint = TextPaint(Paint.ANTI_ALIAS_FLAG)
     private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+    private val pill = RectF()
+    /**
+     * Nombre de la app del centro: va en una cápsula de cristal fija abajo (antes iba bajo el icono y
+     * tapaba a las vecinas). Al cambiar de app, el nombre viejo sube y se va y el nuevo entra desde abajo.
+     */
+    private var focusKey: String? = null
+    private var prevName = ""
+    private var curName = ""
+    private val focusSp = ticker.add(SpringValue(1f, 300f, 26f, 0.002f))
+    private val pillVis = ticker.add(SpringValue(0f, 260f, 26f, 0.002f))
+    private val showNames: Boolean get() = Prefs.labels && S.b(S.DR_LABELS)
 
     // ---- desplazamiento libre en 2D con inercia y borde elástico
     private val pan = ticker.add(Pan())
@@ -190,12 +202,13 @@ class HoneyView(ctx: Context) : AppsView(ctx) {
         iconS = dp(60f)
         d = iconS * 1.16f
         top = insetTop + (if (keyboardUp) dp(20f) else dp(78f))
-        bottom = h - bottomInset - dp(16f)
+        // con nombres, abajo queda sitio para la cápsula del nombre
+        bottom = h - bottomInset - (if (showNames) dp(70f) else dp(16f))
         cx0 = w / 2f
         cy0 = (top + bottom) / 2f
         halfW = w / 2f
         halfH = max(dp(120f), (bottom - top) / 2f)
-        Tx.apply(labelPaint, S.TX_LABEL_DRAWER, dp(13f), 500, dp(3f), 0x99)
+        Tx.apply(labelPaint, S.TX_LABEL_DRAWER, dp(15f), 600, 0f, 0)
     }
 
     /** espiral de hexágonos: el centro, luego anillos de 6, 12, 18... (índice → q, r, anillo) */
@@ -321,15 +334,57 @@ class HoneyView(ctx: Context) : AppsView(ctx) {
                 focusIdx = i
             }
         }
-        // el nombre de la app que está en el centro, que aparece al acercarla
+        // la app del centro: un anillo de luz suave a su alrededor
         val f = focusIdx
-        if (f in cells.indices && Prefs.labels && S.b(S.DR_LABELS)) {
-            val la = a * (1f - smooth(0.06f, 0.26f, best))
-            if (la > 0.01f) {
-                labelPaint.alpha = Tx.alpha(S.TX_LABEL_DRAWER, la)
-                c.drawText(labelOf(cells[f].e, halfW * 1.4f), hitX[f], hitY[f] + hitS[f] / 2f + dp(20f) + Tx.dy(S.TX_LABEL_DRAWER), labelPaint)
-            }
+        val near = 1f - smooth(0.05f, 0.24f, best)
+        if (f in cells.indices && near > 0.01f) {
+            ringPaint.strokeWidth = dp(2f)
+            ringPaint.color = Color.WHITE
+            ringPaint.alpha = (110 * a * near).toInt().coerceIn(0, 255)
+            c.drawCircle(hitX[f], hitY[f], hitS[f] * 0.6f, ringPaint)
         }
+        if (showNames) drawNamePill(c, a, if (f in cells.indices) cells[f].e else null, near)
+    }
+
+    private fun drawNamePill(c: Canvas, a: Float, e: AppEntry?, near: Float) {
+        // cambió la app del centro: el nombre viejo se va hacia arriba y el nuevo entra
+        if (e != null && e.key != focusKey) {
+            // los nombres se recortan una sola vez, al cambiar (no en cada fotograma)
+            prevName = curName
+            curName = android.text.TextUtils.ellipsize(Tx.str(S.TX_LABEL_DRAWER, e.label), labelPaint, width - dp(104f), android.text.TextUtils.TruncateAt.END).toString()
+            focusKey = e.key
+            Mo.tune(focusSp, S.MO_MENU, 300f, 0.8f)
+            focusSp.snap(0f)
+            focusSp.to(1f)
+            ticker.kick()
+        }
+        // la cápsula se ve mientras hay una app cerca del centro
+        val want = if (e != null && near > 0.3f) 1f else 0f
+        if (pillVis.target != want) {
+            Mo.tune(pillVis, S.MO_MENU, 260f, 0.85f)
+            pillVis.to(want)
+            ticker.kick()
+        }
+        val v = clamp01(pillVis.value)
+        if (v <= 0.01f || curName.isEmpty()) return
+        val f = clamp01(focusSp.value)
+        val hasPrev = prevName.isNotEmpty()
+        // el ancho de la cápsula pasa suave del nombre viejo al nuevo
+        val tw = lerp(labelPaint.measureText(if (hasPrev) prevName else curName), labelPaint.measureText(curName), f) + dp(40f)
+        val ph = dp(40f)
+        val cy = height - bottomInset - dp(36f) + (1f - v) * dp(14f)
+        pill.set(width / 2f - tw / 2f, cy - ph / 2f, width / 2f + tw / 2f, cy + ph / 2f)
+        glass.draw(c, pill, ph / 2f, a * v, true, S.SF_SEARCH)
+        val base = cy + dp(5.5f) + Tx.dy(S.TX_LABEL_DRAWER)
+        c.save()
+        c.clipRect(pill)
+        if (hasPrev && f < 1f) {
+            labelPaint.alpha = Tx.alpha(S.TX_LABEL_DRAWER, a * v * (1f - f))
+            c.drawText(prevName, width / 2f, base - f * dp(16f), labelPaint)
+        }
+        labelPaint.alpha = Tx.alpha(S.TX_LABEL_DRAWER, a * v * f)
+        c.drawText(curName, width / 2f, base + (1f - f) * dp(16f), labelPaint)
+        c.restore()
     }
 
     private fun hit(x: Float, y: Float): Int {
