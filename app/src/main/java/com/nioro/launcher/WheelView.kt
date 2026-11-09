@@ -40,6 +40,10 @@ class WheelView(ctx: Context) : AppsView(ctx) {
     private var topY = 0f
     private var bottomY = 0f
     private var bigCy = 0f
+    /** tamaño del icono grande: se ajusta al hueco sobre la rueda (con el teclado abierto hay menos) */
+    private var bigS = 0f
+    /** borde de arriba de la rueda (el bloque grande nunca baja de aquí) */
+    private var wheelTopY = 0f
     private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val namePaint = TextPaint(Paint.ANTI_ALIAS_FLAG)
@@ -185,11 +189,16 @@ class WheelView(ctx: Context) : AppsView(ctx) {
         // el centro de la rueda queda por debajo de la pantalla: se ve solo su arco de arriba
         wcy = bottomY + radius * 0.42f
         step = iconS * 1.42f / radius
-        val wheelTop = wcy - radius - iconS
-        bigCy = topY + (wheelTop - topY) * 0.46f
-        namePaint.textSize = dp(22f)
+        // bloque de la app elegida (icono + nombre + "n de N"): cabe siempre entre arriba y la rueda
+        wheelTopY = wcy - radius - iconS * 0.95f
+        val space = wheelTopY - topY
+        bigS = (space - dp(92f)).coerceIn(0f, dp(104f))
+        if (bigS < dp(40f)) bigS = 0f // sin sitio (teclado abierto en móviles bajos): solo la rueda
+        val block = bigS + dp(68f)
+        bigCy = topY + max(0f, (space - block) / 2f) + bigS / 2f
+        namePaint.textSize = if (bigS < dp(72f)) dp(18f) else dp(22f)
         subPaint.textSize = dp(13.5f)
-        letterPaint.textSize = dp(230f)
+        letterPaint.textSize = min(dp(230f), max(dp(80f), space * 0.9f))
         ringPaint.strokeWidth = iconS * 1.6f
         ringPaint.shader = LinearGradient(0f, wcy - radius - iconS, 0f, wcy - radius * 0.3f, 0x26FFFFFF, 0x05FFFFFF, Shader.TileMode.CLAMP)
         hitX = FloatArray(shown.size)
@@ -309,15 +318,19 @@ class WheelView(ctx: Context) : AppsView(ctx) {
 
     /** la app elegida, en grande arriba: cambia con un fundido y un pequeño rebote */
     private fun drawBig(c: Canvas, a: Float, p: Float) {
+        if (bigS <= 0f) return
         val f = clamp01(selSp.value)
         val pop = popCurve(clamp01(p * 1.4f))
-        val bs = dp(104f) * pop * bigPress.value
+        val bs = bigS * pop * bigPress.value
         val slide = dp(26f)
-        // letra gigante y tenue detrás (como el índice de una lista de música)
+        // letra gigante y tenue detrás (como el índice de una lista de música), sin salirse del hueco
         val cur = shown.getOrNull(sel) ?: return
         val ch = cur.label.trim().firstOrNull()?.uppercaseChar()?.toString() ?: ""
         letterPaint.alpha = (16 * a * f).toInt()
-        c.drawText(ch, wcx, bigCy + dp(80f), letterPaint)
+        c.save()
+        c.clipRect(0f, topY - dp(6f), width.toFloat(), wheelTopY)
+        c.drawText(ch, wcx, bigCy + letterPaint.textSize * 0.36f, letterPaint)
+        c.restore()
         val prev = shown.getOrNull(prevSel)
         if (prev != null && f < 1f) {
             val k = 1f - f
@@ -332,7 +345,7 @@ class WheelView(ctx: Context) : AppsView(ctx) {
         namePaint.alpha = (255 * a * f).toInt()
         c.drawText(nameOf(cur), wcx + ox, bigCy + bs / 2f + dp(36f), namePaint)
         subPaint.alpha = (200 * a * f).toInt()
-        c.drawText((sel + 1).toString() + " de " + shown.size, wcx, bigCy + bs / 2f + dp(58f), subPaint)
+        if (bigCy + bs / 2f + dp(64f) < wheelTopY) c.drawText((sel + 1).toString() + " de " + shown.size, wcx, bigCy + bs / 2f + dp(58f), subPaint)
     }
 
     private val names = HashMap<String, String>()
@@ -378,7 +391,7 @@ class WheelView(ctx: Context) : AppsView(ctx) {
                 moved = false
                 longFired = false
                 downIdx = hitItem(x, y)
-                onBig = downIdx < 0 && hypot(x - wcx, y - bigCy) < dp(70f)
+                onBig = downIdx < 0 && bigS > 0f && hypot(x - wcx, y - bigCy) < bigS * 0.7f
                 uiHandler.removeCallbacks(longRun)
                 unpress()
                 if (downIdx >= 0) {
@@ -441,7 +454,7 @@ class WheelView(ctx: Context) : AppsView(ctx) {
                         val oy = (1f - min(progress, 1f)) * dp(140f)
                         listener?.onLaunch(shown[downIdx], RectF(hitX[downIdx] - s / 2f, hitY[downIdx] + oy - s / 2f, hitX[downIdx] + s / 2f, hitY[downIdx] + oy + s / 2f))
                     } else if (onBig && sel in shown.indices) {
-                        val bs = dp(104f)
+                        val bs = bigS
                         listener?.onLaunch(shown[sel], RectF(wcx - bs / 2f, bigCy - bs / 2f, wcx + bs / 2f, bigCy + bs / 2f))
                     } else if (y < topY) {
                         listener?.onClose()

@@ -49,6 +49,8 @@ class PlaylistView(ctx: Context) : AppsView(ctx) {
     private val list = ArrayList<AppEntry>()
     private val panel = RectF()
     private val rect = RectF()
+    /** recorte con la misma forma redondeada del panel (antes era rectangular: esquinas cuadradas) */
+    private val clip = android.graphics.Path()
     private val namePaint = TextPaint(Paint.ANTI_ALIAS_FLAG)
     private val subPaint = TextPaint(Paint.ANTI_ALIAS_FLAG)
     private val titlePaint = TextPaint(Paint.ANTI_ALIAS_FLAG)
@@ -135,6 +137,8 @@ class PlaylistView(ctx: Context) : AppsView(ctx) {
         titlePaint.textSize = dp(27f)
         barPaint.textSize = dp(16f)
         panel.set(dp(10f), insetTop + (if (keyboardUp) dp(16f) else dp(76f)), w - dp(10f), h - bottomInset - dp(10f))
+        clip.reset()
+        clip.addRoundRect(panel.left + dp(1.5f), panel.top + dp(1.5f), panel.right - dp(1.5f), panel.bottom - dp(1.5f), dp(28.5f), dp(28.5f), android.graphics.Path.Direction.CW)
         headH = if (searching) dp(8f) else dp(244f)
         coverS = dp(136f)
         nameW = max(dp(40f), panel.right - dp(64f) - (panel.left + dp(20f) + iconS + dp(14f)))
@@ -264,7 +268,8 @@ class PlaylistView(ctx: Context) : AppsView(ctx) {
         c.translate(0f, (1f - min(p, 1f)) * dp(60f))
         glass.draw(c, panel, dp(30f), a, true, S.SF_LISTPANEL)
         c.save()
-        c.clipRect(panel.left, panel.top + dp(4f), panel.right, panel.bottom - dp(4f))
+        // el color de la portada y las filas se recortan con las esquinas redondeadas del panel
+        c.clipPath(clip)
         if (!searching) drawHeader(c, a, p)
         val base = baseY()
         var vis = 0
