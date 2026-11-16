@@ -290,6 +290,7 @@ class CardsView(ctx: Context) : HomeModeView(ctx) {
     private var cy = 0f
     private var stepX = 0f
     private var lastSnap = -1
+    private val names = HashMap<String, String>()
 
     init {
         nameP.color = Color.WHITE
@@ -311,6 +312,7 @@ class CardsView(ctx: Context) : HomeModeView(ctx) {
         cw = min(w * 0.64f, ch * 0.78f)
         cy = insetTop + dp(6f) + (areaH - ch) / 2f + ch / 2f
         stepX = cw + dp(14f)
+        names.clear()
         scroll.dim = w
         scroll.min = 0f
         scroll.max = max(0f, (shown.size - 1) * stepX)
@@ -371,9 +373,12 @@ class CardsView(ctx: Context) : HomeModeView(ctx) {
         val from = (centreF - 2f).toInt().coerceAtLeast(0)
         val to = (centreF + 2f).toInt().coerceAtMost(shown.size - 1)
         val q = enter(0)
-        // de las de los lados hacia la del centro, para que la del centro quede delante
-        val order = (from..to).sortedByDescending { abs(it - centreF) }
-        for (i in order) {
+        // de las de los lados hacia la del centro, para que la del centro quede delante (sin crear listas)
+        val centre = centreF.roundToInt()
+        for (pass in 2 downTo 0) for (side in 0..1) {
+            if (pass == 0 && side == 1) continue
+            val i = if (side == 0) centre - pass else centre + pass
+            if (i < from || i > to) continue
             val e = shown[i]
             val cx = cardX(i)
             val d = cx - width / 2f
@@ -392,10 +397,14 @@ class CardsView(ctx: Context) : HomeModeView(ctx) {
             c.drawRoundRect(tmp.left, tmp.top, tmp.right, tmp.top + tmp.height() * 0.45f, rad, rad, shineP)
             val icon = cw * 0.5f * s
             drawIcon(c, e, tmp.centerX(), tmp.top + tmp.height() * 0.42f, icon, a)
-            nameP.textSize = dp(19f) * s
             nameP.alpha = (255f * a).toInt()
-            val n = TextUtils.ellipsize(e.label, nameP, tmp.width() - dp(24f), TextUtils.TruncateAt.END)
-            c.drawText(n, 0, n.length, tmp.centerX(), tmp.top + tmp.height() * 0.78f, nameP)
+            // el nombre se recorta una vez al tamaño de la tarjeta del centro y luego solo se escala
+            val n = names.getOrPut(e.key) {
+                nameP.textSize = dp(19f)
+                TextUtils.ellipsize(e.label, nameP, cw - dp(24f), TextUtils.TruncateAt.END).toString()
+            }
+            nameP.textSize = dp(19f) * s
+            c.drawText(n, tmp.centerX(), tmp.top + tmp.height() * 0.78f, nameP)
             if (near > 0.9f) {
                 hintP.alpha = (180f * q * near).toInt()
                 c.drawText("Toca para abrir", tmp.centerX(), tmp.top + tmp.height() * 0.89f, hintP)

@@ -571,7 +571,7 @@ class SettingsActivity : Activity() {
                 val ver = try { packageManager.getPackageInfo(packageName, 0).versionName } catch (t: Throwable) { "?" }
                 button(k, "Versión", ver, Glyphs.INFO) {}
                 divider(k, dp(60f))
-                updateRow(k)
+                updateRow(k, true)
                 val err = CrashGuard.lastError()
                 if (err != null) {
                     divider(k, dp(60f))
@@ -1103,7 +1103,7 @@ class SettingsActivity : Activity() {
 
     // ---------------------------------------------------------------- Actualizar
     /** Fila "Actualizar": busca, descarga con barra de progreso e instala directo desde el repositorio. */
-    private fun updateRow(parent: LinearLayout) {
+    private fun updateRow(parent: LinearLayout, withAuto: Boolean = false) {
         val box = LinearLayout(this)
         box.orientation = LinearLayout.VERTICAL
         val row = LinearLayout(this)
@@ -1178,7 +1178,7 @@ class SettingsActivity : Activity() {
                 }
             }
         }
-        toggle(parent, "Actualizar automáticamente", "Busca versiones nuevas al volver al inicio (cada 3 horas) y te pide confirmar", Prefs.autoUpdate) {
+        if (withAuto) toggle(parent, "Actualizar automáticamente", "Busca versiones nuevas al volver al inicio (cada 3 horas) y te pide confirmar", Prefs.autoUpdate) {
             Prefs.autoUpdate = it
         }
     }
