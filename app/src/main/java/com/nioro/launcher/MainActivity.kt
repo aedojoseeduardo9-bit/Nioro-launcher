@@ -240,7 +240,12 @@ class MainActivity : Activity() {
         launchedApp = false
         wasStopped = false
         refreshRunning()
+        // las actualizaciones llegan solas: se busca como mucho cada 3 horas, un poco después de volver
+        root.removeCallbacks(autoUpdate)
+        root.postDelayed(autoUpdate, 4000L)
     }
+
+    private val autoUpdate = Runnable { if (resumed && !isDestroyed) Updater.autoCheck(this) }
 
     override fun onPause() {
         resumed = false
@@ -438,9 +443,8 @@ class MainActivity : Activity() {
         when (a) {
             S.A_DRAWER -> {
                 menu.dismiss()
-                drawer.open(home.launchpadX())
-                // modo "Sin cajón": todas las apps ya están en el inicio, así que se abre para buscar
-                if (ScreenModes.mode() == ScreenModes.NO_DRAWER) drawer.showKeyboard()
+                // modo "Sin cajón": no hay menú de apps, todas están en el inicio
+                if (!noDrawer()) drawer.open(home.launchpadX())
             }
             S.A_NOTIF -> homeHost.expandShade()
             S.A_QS -> try {
@@ -452,7 +456,7 @@ class MainActivity : Activity() {
             }
             S.A_RECENTS -> homeHost.openRecents()
             S.A_EDIT -> home.enterEdit()
-            S.A_SEARCH -> {
+            S.A_SEARCH -> if (!noDrawer()) {
                 drawer.open(home.launchpadX())
                 drawer.showKeyboard()
             }
@@ -513,6 +517,7 @@ class MainActivity : Activity() {
         root.removeCallbacks(calmDown)
         root.removeCallbacks(overlayGuard)
         root.removeCallbacks(dropWarm)
+        root.removeCallbacks(autoUpdate)
         bg.shutdown()
         super.onDestroy()
     }
@@ -543,8 +548,7 @@ class MainActivity : Activity() {
         override fun launch(e: AppEntry, from: RectF, fromDock: Boolean) = this@MainActivity.launch(e, from)
         override fun openDrawer() {
             menu.dismiss()
-            drawer.open(home.launchpadX())
-            if (ScreenModes.mode() == ScreenModes.NO_DRAWER) drawer.showKeyboard()
+            if (!noDrawer()) drawer.open(home.launchpadX())
         }
         override fun prewarmDrawer() {
             // Rejilla y Abanico dejan ver el inicio difuminado: la foto se hace ya, al apoyar el dedo,
@@ -557,16 +561,14 @@ class MainActivity : Activity() {
             }
         }
         override fun drawerDrag(stage: Int, p: Float, velocity: Float) {
+            if (noDrawer()) return
             when (stage) {
                 0 -> {
                     menu.dismiss()
                     drawer.beginDrag(home.launchpadX())
                 }
                 1 -> drawer.dragTo(p)
-                else -> {
-                    drawer.endDrag(p >= 0.5f, velocity)
-                    if (p >= 0.5f && ScreenModes.mode() == ScreenModes.NO_DRAWER) drawer.showKeyboard()
-                }
+                else -> drawer.endDrag(p >= 0.5f, velocity)
             }
         }
         override fun screenArea(top: Float, bottom: Float) = screen.setArea(top, bottom)
@@ -670,6 +672,9 @@ class MainActivity : Activity() {
      * Aplica el modo de pantalla elegido. "Sin cajón" pone todas las apps en el inicio y guarda antes
      * una copia del inicio, que vuelve al cambiar a otro modo (así no queda un inicio abarrotado).
      */
+    /** modo "Sin cajón": el menú de apps no existe */
+    private fun noDrawer(): Boolean = ScreenModes.mode() == ScreenModes.NO_DRAWER
+
     private fun syncScreenMode() {
         val m = ScreenModes.mode()
         val last = Prefs.lastScreen
@@ -707,9 +712,9 @@ class MainActivity : Activity() {
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
         if (::fx.isInitialized && resumed) {
             try {
-                // la estela solo en el inicio (o también sobre las apps si el usuario lo pide)
+                // sin estela que siga al dedo; el efecto al tocar, solo en el inicio (o también sobre las apps si se pide)
                 val ok = (!drawer.isOpen && !recents.isOpen) || S.b(S.FX_APPS)
-                fx.feed(ev, ok && S.i(S.FX_TRAIL) > 0, ok && S.i(S.FX_TAP) > 0 && !menu.showing)
+                fx.feed(ev, false, ok && S.i(S.FX_TAP) > 0 && !menu.showing)
             } catch (t: Throwable) {
             }
         }
@@ -721,7 +726,7 @@ class MainActivity : Activity() {
         override fun onClose() = recents.close()
         override fun onOpenAll() {
             recents.close()
-            drawer.open(home.launchpadX())
+            if (!noDrawer()) drawer.open(home.launchpadX())
         }
     }
 }

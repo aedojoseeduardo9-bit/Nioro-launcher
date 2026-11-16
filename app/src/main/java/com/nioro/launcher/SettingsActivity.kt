@@ -728,7 +728,7 @@ class SettingsActivity : Activity() {
         k.addView(desc)
     }
 
-    /** efectos animados de color con una zona de prueba en vivo (se puede deslizar el dedo) */
+    /** efectos animados de color con una zona de prueba en vivo (se puede tocar) */
     private fun fxCard(c: LinearLayout) {
         sectionLabel(c, "Efectos de color")
         val k = card(c, dp(12f).toInt())
@@ -737,7 +737,7 @@ class SettingsActivity : Activity() {
         g.cornerRadius = dp(20f)
         box.background = g
         box.clipToOutline = true
-        val hint = text("Desliza el dedo aquí para probar", 13f, 500, 0x8CFFFFFF.toInt())
+        val hint = text("Toca aquí para probar", 13f, 500, 0x8CFFFFFF.toInt())
         hint.gravity = Gravity.CENTER
         box.addView(hint, FrameLayout.LayoutParams(-1, -1))
         val fxv = ColorFxView(this, true)
@@ -752,15 +752,9 @@ class SettingsActivity : Activity() {
             w.setPadding(dp(20f).toInt(), dp(6f).toInt(), dp(16f).toInt(), dp(2f).toInt())
             k.addView(w)
         }
-        fxv.post { fxv.demo(S.i(S.FX_TRAIL)) }
-        choice(k, "Estela al deslizar el dedo", ColorFx.TRAILS, S.i(S.FX_TRAIL), -1, null) {
-            S.set(S.FX_TRAIL, it.toFloat())
-            fxv.demo(it)
-        }
-        divider(k, 0f)
         choice(k, "Colores", ColorFx.PALS, S.i(S.FX_PAL), -1, null) {
             S.set(S.FX_PAL, it.toFloat())
-            fxv.demo(S.i(S.FX_TRAIL))
+            fxv.burst(S.i(S.FX_TAP).coerceAtLeast(1), fxv.width / 2f, fxv.height / 2f, 1f)
         }
         divider(k, 0f)
         choice(k, "Al tocar la pantalla", ColorFx.BURSTS, S.i(S.FX_TAP), -1, null) {
@@ -782,7 +776,7 @@ class SettingsActivity : Activity() {
             S.set(S.FX_SIZE, it.toFloat())
         }
         divider(k, 0f)
-        toggle(k, "También sobre la vista de apps", "La estela y el toque también al buscar o abrir apps", S.b(S.FX_APPS)) {
+        toggle(k, "También sobre la vista de apps", "El efecto al tocar también al buscar o abrir apps", S.b(S.FX_APPS)) {
             S.set(S.FX_APPS, if (it) 1f else 0f)
         }
     }
@@ -1133,12 +1127,25 @@ class SettingsActivity : Activity() {
         box.addView(bar, LinearLayout.LayoutParams(-1, dp(18f).toInt()))
         parent.addView(box)
 
-        var remote = -1L
+        // lo que dice el instalador (confirmar, cancelado, sin espacio...) aparece aquí mismo
+        val statusCb: (String) -> Unit = { s ->
+            if (!isDestroyed) {
+                sub.text = s
+                bar.visibility = View.GONE
+            }
+        }
+        Updater.onStatus = statusCb
+        sub.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) { Updater.onStatus = statusCb }
+            override fun onViewDetachedFromWindow(v: View) { if (Updater.onStatus === statusCb) Updater.onStatus = null }
+        })
+
         fun install() {
             sub.text = "Descargando… 0 %"
             bar.visibility = View.VISIBLE
             bar.set(0f)
             Updater.downloadAndInstall(this, { pct ->
+                if (isDestroyed) return@downloadAndInstall
                 sub.text = "Descargando… $pct %"
                 bar.set(pct / 100f)
             }) { err ->
@@ -1147,30 +1154,32 @@ class SettingsActivity : Activity() {
                     sub.text = err
                     bar.visibility = View.GONE
                 } else {
-                    sub.text = "Listo · confirma la instalación"
+                    sub.text = "Abriendo la instalación…"
                     bar.set(1f)
                 }
             }
         }
         row.setOnClickListener {
-            if (Updater.busy) return@setOnClickListener
-            if (remote > local) {
-                install()
+            if (Updater.busy) {
+                toast("Ya se está descargando")
                 return@setOnClickListener
             }
+            // siempre se vuelve a preguntar a GitHub: así nunca se instala una versión vieja guardada
             sub.text = "Buscando actualizaciones…"
             Updater.check { v ->
                 if (isDestroyed) return@check
-                remote = v
                 when {
-                    v < 0 -> sub.text = "Sin conexión con GitHub · inténtalo de nuevo"
+                    v < 0 -> sub.text = "Sin conexión con GitHub · revisa internet y toca otra vez"
                     v > local -> {
-                        sub.text = "Nueva versión 1.$v disponible · instalando…"
+                        sub.text = "Nueva versión 1.$v disponible · descargando…"
                         install()
                     }
                     else -> sub.text = "Ya tienes la última versión (1.$local)"
                 }
             }
+        }
+        toggle(parent, "Actualizar automáticamente", "Busca versiones nuevas al volver al inicio (cada 3 horas) y te pide confirmar", Prefs.autoUpdate) {
+            Prefs.autoUpdate = it
         }
     }
 

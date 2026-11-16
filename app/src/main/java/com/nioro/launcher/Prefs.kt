@@ -89,6 +89,11 @@ object Prefs {
     var blur by BoolPref("blur", true)
     var tilt by BoolPref("tilt", false)
     var seeded by BoolPref("seeded", false)
+    /** buscar actualizaciones solo al volver al inicio */
+    var autoUpdate by BoolPref("autoUpdate", true)
+    var lastUpdateCheck: Long
+        get() = s().getLong("lastUpdateCheck", 0L)
+        set(v) { s().edit().putLong("lastUpdateCheck", v).apply() }
 
     val speed: Float get() = speedPct / 100f
 

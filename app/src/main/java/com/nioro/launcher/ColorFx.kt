@@ -237,7 +237,8 @@ class ColorFxView(ctx: Context, private val preview: Boolean = false) : View(ctx
         if (!preview) return false
         if (ev.actionMasked == MotionEvent.ACTION_DOWN) parent?.requestDisallowInterceptTouchEvent(true)
         demoT0 = -100f
-        feed(ev, trailStyle() > 0, S.i(S.FX_TAP) > 0)
+        // sin estela que siga al dedo, también en la zona de prueba
+        feed(ev, false, S.i(S.FX_TAP) > 0)
         return true
     }
 

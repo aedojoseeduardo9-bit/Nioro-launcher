@@ -35,6 +35,53 @@ object Updater {
     private val main = Handler(Looper.getMainLooper())
     @Volatile var busy = false
         private set
+    /** texto del estado de la instalación (lo muestra la fila "Actualizar" de Ajustes si está abierta) */
+    var onStatus: ((String) -> Unit)? = null
+    private var appCtx: Context? = null
+    /**
+     * Si el instalador interno no contesta (algunas capas bloquean su ventana de confirmación sin avisar),
+     * a los 12 s se abre el instalador normal del sistema con el APK ya descargado.
+     */
+    private val watchdog = Runnable {
+        val c = appCtx ?: return@Runnable
+        if (installWithSystem(c)) status("Abriendo el instalador del sistema…")
+        else status("La instalación no respondió · toca Actualizar otra vez")
+    }
+
+    fun status(s: String) {
+        main.post { onStatus?.invoke(s) }
+    }
+
+    /** el instalador contestó: ya no hace falta el plan B */
+    fun answered() {
+        main.removeCallbacks(watchdog)
+    }
+
+    private const val AUTO_EVERY = 3 * 60 * 60 * 1000L
+    private var lastAuto = 0L
+
+    /**
+     * Búsqueda automática al volver al inicio (como mucho cada 3 horas): si hay versión nueva la
+     * descarga y abre la confirmación de instalación. No abre Ajustes del sistema por su cuenta.
+     */
+    fun autoCheck(act: android.app.Activity) {
+        if (!Prefs.autoUpdate || busy) return
+        val now = System.currentTimeMillis()
+        if (now - lastAuto < AUTO_EVERY && now - Prefs.lastUpdateCheck < AUTO_EVERY) return
+        lastAuto = now
+        Prefs.lastUpdateCheck = now
+        val app = act.applicationContext
+        val local = localVersion(app)
+        check { v ->
+            if (v <= local || busy) return@check
+            if (Build.VERSION.SDK_INT >= 26 && !app.packageManager.canRequestPackageInstalls()) {
+                Toast.makeText(app, "Nioro 1.$v disponible · ve a Ajustes → Actualizar", Toast.LENGTH_LONG).show()
+                return@check
+            }
+            Toast.makeText(app, "Descargando Nioro 1.$v…", Toast.LENGTH_SHORT).show()
+            downloadAndInstall(app, {}) { err -> if (err != null) Toast.makeText(app, err, Toast.LENGTH_LONG).show() }
+        }
+    }
 
     fun localVersion(ctx: Context): Long {
         return try {
@@ -132,14 +179,28 @@ object Updater {
                                     lastPct = pct
                                     main.post { progress(pct) }
                                 }
+                            } else {
+                                // sin tamaño conocido: avanza poco a poco hasta 95 % (el APK pesa unos 3 MB)
+                                val pct = (read * 95 / (3L * 1024 * 1024)).toInt().coerceAtMost(95)
+                                if (pct != lastPct) {
+                                    lastPct = pct
+                                    main.post { progress(pct) }
+                                }
                             }
                         }
                     }
                 }
                 c.disconnect()
                 if (total > 0 && read != total) throw IllegalStateException("Descarga incompleta")
+                // un APK real empieza por "PK" (es un zip); si GitHub devolvió una página de error, se para aquí
+                val head = ByteArray(2)
+                f.inputStream().use { it.read(head) }
+                if (head[0] != 'P'.code.toByte() || head[1] != 'K'.code.toByte()) throw IllegalStateException("el archivo descargado no es un APK")
                 try {
                     install(app, f)
+                    appCtx = app
+                    main.removeCallbacks(watchdog)
+                    main.postDelayed(watchdog, 12_000L)
                 } catch (t: Throwable) {
                     // algunas capas (MIUI) no dejan usar el instalador interno: se abre el del sistema
                     if (!installWithSystem(app)) throw t
@@ -201,33 +262,49 @@ object Updater {
 /** Recibe el resultado del instalador del sistema y muestra la confirmación al usuario. */
 class InstallReceiver : BroadcastReceiver() {
     override fun onReceive(ctx: Context, intent: Intent) {
+        Updater.answered()
+        val msg = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: ""
         when (intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
             PackageInstaller.STATUS_PENDING_USER_ACTION -> {
                 @Suppress("DEPRECATION")
                 val confirm = intent.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)
+                var shown = false
                 if (confirm != null) {
                     confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     try {
                         ctx.startActivity(confirm)
+                        shown = true
                     } catch (t: Throwable) {
                     }
                 }
+                // si la ventana de confirmación no se pudo abrir, el instalador normal del sistema
+                if (shown) Updater.status("Confirma la instalación")
+                else if (Updater.installWithSystem(ctx)) Updater.status("Abriendo el instalador del sistema…")
+                else Updater.status("No se pudo abrir el instalador · toca Actualizar otra vez")
             }
             PackageInstaller.STATUS_SUCCESS -> {
+                Updater.status("Actualizado")
                 Toast.makeText(ctx, "Nioro Launcher actualizado", Toast.LENGTH_SHORT).show()
             }
-            // cancelada por el usuario, firma distinta o sin espacio: el instalador del sistema tampoco ayudaría
-            PackageInstaller.STATUS_FAILURE_ABORTED, PackageInstaller.STATUS_FAILURE_INCOMPATIBLE,
-            PackageInstaller.STATUS_FAILURE_STORAGE -> {
-                val msg = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: ""
+            PackageInstaller.STATUS_FAILURE_ABORTED -> {
+                Updater.status("Instalación cancelada · toca Actualizar para reintentar")
+            }
+            // firma distinta o sin espacio: el instalador del sistema tampoco ayudaría
+            PackageInstaller.STATUS_FAILURE_INCOMPATIBLE -> {
+                Updater.status("Esta versión no se puede instalar encima (firma distinta) $msg")
                 Toast.makeText(ctx, "La instalación no se completó $msg", Toast.LENGTH_LONG).show()
+            }
+            PackageInstaller.STATUS_FAILURE_STORAGE -> {
+                Updater.status("No hay espacio suficiente para actualizar")
+                Toast.makeText(ctx, "No hay espacio suficiente para actualizar", Toast.LENGTH_LONG).show()
             }
             else -> {
                 // p. ej. MIUI: "INSTALL_FAILED_INTERNAL_ERROR: Permission Denied" -> instalador del sistema
                 if (Updater.installWithSystem(ctx)) {
+                    Updater.status("Abriendo el instalador del sistema…")
                     Toast.makeText(ctx, "Abriendo el instalador del sistema…", Toast.LENGTH_SHORT).show()
                 } else {
-                    val msg = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: ""
+                    Updater.status("La instalación no se completó $msg")
                     Toast.makeText(ctx, "La instalación no se completó $msg", Toast.LENGTH_LONG).show()
                 }
             }

@@ -82,6 +82,8 @@ object Menus {
         for (d in S.defs) {
             // grupos que empiezan por "_" son internos (p. ej. qué diseño del dock está elegido)
             if (d.group.startsWith("_")) continue
+            // la estela que seguía al dedo se quitó: su ajuste ya no se muestra
+            if (d.id == S.FX_TRAIL) continue
             val k = d.cat.toString() + "|" + d.group
             groups.getOrPut(k) { ArrayList() }.add(d.id)
             catOf[k] = d.cat
