@@ -401,6 +401,7 @@ class SettingsActivity : Activity() {
         if (i == PAGE_LOOK) {
             colorThemesCard(c)
             themesCard(c)
+            fxCard(c)
         }
         if (i == PAGE_GESTURES) {
             val t = text("Elige qué hace cada gesto en la pantalla de inicio y cómo vibra el launcher.", 13.5f, 400, OneColors.SUB)
@@ -414,6 +415,10 @@ class SettingsActivity : Activity() {
     private fun basicSettings(c: LinearLayout, i: Int) {
         when (i) {
             PAGE_HOME -> {
+                // modos de pantalla: cambian toda la pantalla de inicio
+                sectionLabel(c, "Modo de pantalla")
+                screenModesCard(c)
+
                 // vista previa en vivo de la pantalla de inicio
                 val pk = card(c, dp(12f).toInt())
                 val gp = GridPreview(this)
@@ -644,9 +649,10 @@ class SettingsActivity : Activity() {
         val row = LinearLayout(this)
         row.orientation = LinearLayout.HORIZONTAL
         val items = arrayOf(
-            Triple("Organizar\ninicio", Glyphs.HOME, PAGE_HOME),
+            Triple("Modos de\npantalla", Glyphs.HOME, PAGE_HOME),
             Triple("Diseños\ndel dock", Glyphs.DOCK, PAGE_DOCK),
             Triple("Vista\nde apps", Glyphs.GRID, PAGE_APPS),
+            Triple("Efectos\nde color", Glyphs.PALETTE, PAGE_LOOK),
             Triple("Anima-\nciones", Glyphs.MOTION, PAGE_MOTION)
         )
         for ((label, glyph, pg) in items) {
@@ -667,6 +673,118 @@ class SettingsActivity : Activity() {
             row.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
         }
         k.addView(row)
+    }
+
+    /** galería de los 7 modos de pantalla: cada miniatura dibuja el modo; tocar uno lo aplica */
+    private fun screenModesCard(c: LinearLayout) {
+        val k = card(c, dp(12f).toInt())
+        val cur = ScreenModes.mode()
+        val desc = text(ScreenModes.DESC[cur], 13.5f, 400, OneColors.SUB)
+        desc.setPadding(dp(18f).toInt(), dp(6f).toInt(), dp(16f).toInt(), dp(4f).toInt())
+        val thumbs = ArrayList<ScreenModeThumb>()
+        var row: LinearLayout? = null
+        val perRow = 4
+        val n = ScreenModes.NAMES.size
+        for (i in 0 until n) {
+            if (i % perRow == 0) {
+                val r = LinearLayout(this)
+                r.orientation = LinearLayout.HORIZONTAL
+                r.setPadding(dp(8f).toInt(), 0, dp(8f).toInt(), 0)
+                k.addView(r, LinearLayout.LayoutParams(-1, -2))
+                row = r
+            }
+            val t = ScreenModeThumb(this, i)
+            t.picked = cur == i
+            t.contentDescription = ScreenModes.NAMES[i]
+            t.setOnClickListener { v ->
+                S.set(S.H_SCREEN, i.toFloat())
+                for (x in thumbs) {
+                    x.picked = x.idx == i
+                    x.invalidate()
+                }
+                desc.text = ScreenModes.DESC[i]
+                Hx.fire(v, S.HE_SETTING)
+                v.animate().cancel()
+                v.scaleX = 0.9f
+                v.scaleY = 0.9f
+                v.animate().scaleX(1f).scaleY(1f).setInterpolator(android.view.animation.OvershootInterpolator(3f)).setDuration(320).start()
+                toast("Modo de pantalla: " + ScreenModes.NAMES[i])
+            }
+            thumbs.add(t)
+            row?.addView(t, LinearLayout.LayoutParams(0, dp(136f).toInt(), 1f).apply {
+                leftMargin = dp(3f).toInt()
+                rightMargin = dp(3f).toInt()
+                bottomMargin = dp(6f).toInt()
+            })
+        }
+        // la última fila se completa con huecos para que todas las miniaturas midan lo mismo
+        val rest = (perRow - n % perRow) % perRow
+        repeat(rest) {
+            row?.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f).apply {
+                leftMargin = dp(3f).toInt()
+                rightMargin = dp(3f).toInt()
+            })
+        }
+        k.addView(desc)
+    }
+
+    /** efectos animados de color con una zona de prueba en vivo (se puede deslizar el dedo) */
+    private fun fxCard(c: LinearLayout) {
+        sectionLabel(c, "Efectos de color")
+        val k = card(c, dp(12f).toInt())
+        val box = FrameLayout(this)
+        val g = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xFF1B2A6B.toInt(), 0xFF3B1F6E.toInt(), 0xFF0E1230.toInt()))
+        g.cornerRadius = dp(20f)
+        box.background = g
+        box.clipToOutline = true
+        val hint = text("Desliza el dedo aquí para probar", 13f, 500, 0x8CFFFFFF.toInt())
+        hint.gravity = Gravity.CENTER
+        box.addView(hint, FrameLayout.LayoutParams(-1, -1))
+        val fxv = ColorFxView(this, true)
+        box.addView(fxv, FrameLayout.LayoutParams(-1, -1))
+        k.addView(box, LinearLayout.LayoutParams(-1, dp(190f).toInt()).apply {
+            leftMargin = dp(12f).toInt()
+            rightMargin = dp(12f).toInt()
+            bottomMargin = dp(6f).toInt()
+        })
+        if (S.b(S.P_REDUCE)) {
+            val w = text("Con «Reducir movimiento» activado (Rendimiento) los efectos no se muestran.", 13f, 400, 0xFFFFB020.toInt())
+            w.setPadding(dp(20f).toInt(), dp(6f).toInt(), dp(16f).toInt(), dp(2f).toInt())
+            k.addView(w)
+        }
+        fxv.post { fxv.demo(S.i(S.FX_TRAIL)) }
+        choice(k, "Estela al deslizar el dedo", ColorFx.TRAILS, S.i(S.FX_TRAIL), -1, null) {
+            S.set(S.FX_TRAIL, it.toFloat())
+            fxv.demo(it)
+        }
+        divider(k, 0f)
+        choice(k, "Colores", ColorFx.PALS, S.i(S.FX_PAL), -1, null) {
+            S.set(S.FX_PAL, it.toFloat())
+            fxv.demo(S.i(S.FX_TRAIL))
+        }
+        divider(k, 0f)
+        choice(k, "Al tocar la pantalla", ColorFx.BURSTS, S.i(S.FX_TAP), -1, null) {
+            S.set(S.FX_TAP, it.toFloat())
+            fxv.burst(it, fxv.width / 2f, fxv.height / 2f, 1f)
+        }
+        divider(k, 0f)
+        choice(k, "Al abrir una app", ColorFx.BURSTS, S.i(S.FX_OPEN), -1, null) {
+            S.set(S.FX_OPEN, it.toFloat())
+            fxv.burst(it, fxv.width / 2f, fxv.height / 2f, 1.7f)
+        }
+        divider(k, 0f)
+        choice(k, "Al volver al inicio", ColorFx.ENTERS, S.i(S.FX_ENTER), -1, null) {
+            S.set(S.FX_ENTER, it.toFloat())
+            fxv.enter(it)
+        }
+        divider(k, 0f)
+        slider(k, "Tamaño de los efectos", 50, 200, S.i(S.FX_SIZE), "%") {
+            S.set(S.FX_SIZE, it.toFloat())
+        }
+        divider(k, 0f)
+        toggle(k, "También sobre la vista de apps", "La estela y el toque también al buscar o abrir apps", S.b(S.FX_APPS)) {
+            S.set(S.FX_APPS, if (it) 1f else 0f)
+        }
     }
 
     /**

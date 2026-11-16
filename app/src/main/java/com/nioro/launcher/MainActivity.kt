@@ -28,6 +28,11 @@ class MainActivity : Activity() {
     private lateinit var overlay: OpenOverlay
     private lateinit var menu: MenuView
     private lateinit var backdrop: BackdropView
+    /** modos de pantalla Panal, Rueda, Minimalista y Lista: la vista de apps que hace de inicio */
+    private lateinit var screen: ScreenHost
+    /** efectos animados de color (estela del dedo, explosiones, barrido al volver) */
+    private lateinit var fx: ColorFxView
+    private var shownScreen = -1
     private val bg = Executors.newSingleThreadExecutor()
     private var launchedApp = false
     private var lastBlur = -1f
@@ -60,13 +65,18 @@ class MainActivity : Activity() {
         overlay = OpenOverlay(this)
         menu = MenuView(this)
         backdrop = BackdropView(this)
+        screen = ScreenHost(this)
+        fx = ColorFxView(this)
         val mp = FrameLayout.LayoutParams.MATCH_PARENT
         root.addView(home, FrameLayout.LayoutParams(mp, mp))
+        root.addView(screen, FrameLayout.LayoutParams(mp, mp))
         root.addView(backdrop, FrameLayout.LayoutParams(mp, mp))
         root.addView(drawer, FrameLayout.LayoutParams(mp, mp))
         root.addView(recents, FrameLayout.LayoutParams(mp, mp))
         root.addView(overlay, FrameLayout.LayoutParams(mp, mp))
         root.addView(menu, FrameLayout.LayoutParams(mp, mp))
+        // encima de todo; no recibe toques (se los pasa dispatchTouchEvent)
+        root.addView(fx, FrameLayout.LayoutParams(mp, mp))
         setContentView(root)
         Screen.onAnimating = { on ->
             if (on) {
@@ -99,6 +109,7 @@ class MainActivity : Activity() {
         }
 
         home.host = homeHost
+        screen.listener = screenCb
         drawer.callback = drawerCb
         recents.view.listener = recentsCb
         recents.onProgress = { p ->
@@ -162,17 +173,27 @@ class MainActivity : Activity() {
                 Prefs.setDockKeys(Prefs.dockKeys().filter { AppRepo.get(it) != null })
             }
             seenIcons = AppRepo.version
+            syncScreenMode()
             home.reload()
             drawer.refreshData()
+            screen.refreshData()
             refreshRunning()
         }
     }
 
     private var seenIcons = -1
 
+    /** trabajo en segundo plano; tras cerrar la actividad el hilo ya no acepta tareas (no debe cerrarse por eso) */
+    private fun runBg(r: () -> Unit) {
+        try {
+            bg.execute(r)
+        } catch (t: Throwable) {
+        }
+    }
+
     private fun refreshRunning() {
         val ctx = applicationContext
-        bg.execute {
+        runBg {
             val set = try { Recents.recentPackages(ctx) } catch (t: Throwable) { emptySet() }
             runOnUiThread { if (!isDestroyed) home.setRunning(set) }
         }
@@ -191,8 +212,10 @@ class MainActivity : Activity() {
         if (wasStopped) {
             // Al volver (de una app, de Ajustes o al desbloquear) se releen los ajustes.
             if (!Prefs.seeded || AppRepo.bakedShape != Prefs.iconShape || AppRepo.bakedRes != S.i(S.P_ICON_RES) || AppRepo.version != seenIcons) reloadApps() else {
+                syncScreenMode()
                 home.reload()
                 drawer.refreshData()
+                screen.refreshData()
             }
             home.refreshStyle()
         }
@@ -200,7 +223,11 @@ class MainActivity : Activity() {
             if (drawer.isOpen) drawer.closeNow()
             if (recents.isOpen) recents.closeNow()
         }
-        if (launchedApp || wasStopped) home.playEnter()
+        if (launchedApp || wasStopped) {
+            home.playEnter()
+            screen.playEnter()
+            fx.enter(S.i(S.FX_ENTER))
+        }
         if (S.b(S.DT_BATTERY)) {
             try {
                 val bi = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
@@ -227,6 +254,7 @@ class MainActivity : Activity() {
         overlay.hide()
         home.exitEdit(true)
         home.exitClockEdit(true)
+        fx.clear()
         // nada de animaciones ni sensores mientras el launcher no se ve
         if (drawer.isOpen) drawer.closeNow()
         if (recents.isOpen) recents.closeNow()
@@ -280,6 +308,7 @@ class MainActivity : Activity() {
             backdrop.release()
             home.alpha = 1f
         }
+        screen.follow(home.alpha, home.scaleX)
         wallpaperBlur(if (blurOn) p else 0f)
     }
 
@@ -308,6 +337,7 @@ class MainActivity : Activity() {
         val style = Prefs.openAnim
         val src = RectF(from)
         if (src.width() < 2f) src.set(root.width / 2f - 40f, root.height / 2f - 40f, root.width / 2f + 40f, root.height / 2f + 40f)
+        fx.burst(S.i(S.FX_OPEN), src.centerX(), src.centerY(), 1.7f)
         overlay.start(e, src, style) { doStart(e) }
     }
 
@@ -406,7 +436,12 @@ class MainActivity : Activity() {
         if (a == S.A_NONE) return
         Hx.gesture(root, g)
         when (a) {
-            S.A_DRAWER -> { menu.dismiss(); drawer.open(home.launchpadX()) }
+            S.A_DRAWER -> {
+                menu.dismiss()
+                drawer.open(home.launchpadX())
+                // modo "Sin cajón": todas las apps ya están en el inicio, así que se abre para buscar
+                if (ScreenModes.mode() == ScreenModes.NO_DRAWER) drawer.showKeyboard()
+            }
             S.A_NOTIF -> homeHost.expandShade()
             S.A_QS -> try {
                 @SuppressLint("WrongConstant")
@@ -474,6 +509,11 @@ class MainActivity : Activity() {
         } catch (t: Throwable) {
         }
         try { unregisterReceiver(pkgReceiver) } catch (t: Throwable) {}
+        // nada pendiente que se ejecute con la actividad ya cerrada
+        root.removeCallbacks(calmDown)
+        root.removeCallbacks(overlayGuard)
+        root.removeCallbacks(dropWarm)
+        bg.shutdown()
         super.onDestroy()
     }
 
@@ -504,6 +544,7 @@ class MainActivity : Activity() {
         override fun openDrawer() {
             menu.dismiss()
             drawer.open(home.launchpadX())
+            if (ScreenModes.mode() == ScreenModes.NO_DRAWER) drawer.showKeyboard()
         }
         override fun prewarmDrawer() {
             // Rejilla y Abanico dejan ver el inicio difuminado: la foto se hace ya, al apoyar el dedo,
@@ -522,13 +563,18 @@ class MainActivity : Activity() {
                     drawer.beginDrag(home.launchpadX())
                 }
                 1 -> drawer.dragTo(p)
-                else -> drawer.endDrag(p >= 0.5f, velocity)
+                else -> {
+                    drawer.endDrag(p >= 0.5f, velocity)
+                    if (p >= 0.5f && ScreenModes.mode() == ScreenModes.NO_DRAWER) drawer.showKeyboard()
+                }
             }
         }
+        override fun screenArea(top: Float, bottom: Float) = screen.setArea(top, bottom)
+        override fun homeCover(k: Float) = screen.setCover(k)
         override fun openRecents() {
             menu.dismiss()
             val ctx = applicationContext
-            bg.execute {
+            runBg {
                 val list = try { Recents.list(ctx) } catch (t: Throwable) { emptyList() }
                 runOnUiThread {
                     if (!isDestroyed) {
@@ -610,6 +656,64 @@ class MainActivity : Activity() {
             @Suppress("DEPRECATION")
             overridePendingTransition(R.anim.slide_up_in, R.anim.stay)
         }
+    }
+
+    private val screenCb = object : AppsView.Listener {
+        override fun onLaunch(e: AppEntry, from: RectF) = launch(e, from)
+        override fun onMenu(e: AppEntry, anchor: RectF) = appMenu(e, anchor, 2)
+        override fun onClose() {}
+        override fun onTouchStart() = menu.dismiss()
+        override fun onAddHome(e: AppEntry) = drawerCb.onAddHome(e)
+    }
+
+    /**
+     * Aplica el modo de pantalla elegido. "Sin cajón" pone todas las apps en el inicio y guarda antes
+     * una copia del inicio, que vuelve al cambiar a otro modo (así no queda un inicio abarrotado).
+     */
+    private fun syncScreenMode() {
+        val m = ScreenModes.mode()
+        val last = Prefs.lastScreen
+        if (m != last) {
+            if (m == ScreenModes.NO_DRAWER) {
+                Prefs.setHomeBackup(Prefs.homeKeys())
+                Prefs.homeBackupSaved = true
+            } else if (last == ScreenModes.NO_DRAWER && Prefs.homeBackupSaved) {
+                val back = Prefs.homeBackup()
+                Prefs.setHomeKeys(back.map { if (it == HomeSlots.BLANK || AppRepo.apps.isEmpty() || AppRepo.get(it) != null) it else HomeSlots.BLANK })
+                Prefs.homeBackupSaved = false
+            }
+            Prefs.lastScreen = m
+        }
+        if (m == ScreenModes.NO_DRAWER && AppRepo.apps.isNotEmpty()) {
+            val h = Prefs.homeKeys()
+            val have = HashSet<String>(h)
+            have.addAll(Prefs.dockKeys())
+            var changed = false
+            for (e in AppRepo.sorted(AppRepo.visible())) {
+                if (have.add(e.key)) {
+                    HomeSlots.add(h, e.key)
+                    changed = true
+                }
+            }
+            if (changed) Prefs.setHomeKeys(h)
+        }
+        if (m != shownScreen) {
+            shownScreen = m
+            screen.apply(m)
+            home.refreshStyle()
+        }
+    }
+
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        if (::fx.isInitialized && resumed) {
+            try {
+                // la estela solo en el inicio (o también sobre las apps si el usuario lo pide)
+                val ok = (!drawer.isOpen && !recents.isOpen) || S.b(S.FX_APPS)
+                fx.feed(ev, ok && S.i(S.FX_TRAIL) > 0, ok && S.i(S.FX_TAP) > 0 && !menu.showing)
+            } catch (t: Throwable) {
+            }
+        }
+        return super.dispatchTouchEvent(ev)
     }
 
     private val recentsCb = object : RecentsView.Listener {

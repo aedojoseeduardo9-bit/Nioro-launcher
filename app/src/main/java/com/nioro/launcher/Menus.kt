@@ -119,7 +119,7 @@ object Menus {
                 S.C_DOCK -> Sec(DOCK, "Más opciones", optTitle(cat, g), K_OPT, arr, order)
                 S.C_DRAWER -> Sec(APPS, "Más opciones", optTitle(cat, g), K_OPT, arr, order)
                 S.C_RECENTS -> Sec(RECENTS, "Más opciones", optTitle(cat, g), K_OPT, arr, order)
-                S.C_COLOR -> Sec(LOOK, "Más opciones", "Colores y fondo", K_OPT, arr, order)
+                S.C_COLOR -> Sec(LOOK, "Más opciones", if (g == "Efectos de color") g else "Colores y fondo", K_OPT, arr, order)
                 S.C_PERF -> Sec(BATTERY, "Más opciones", "Rendimiento", K_OPT, arr, order)
                 else -> Sec(LOOK, "Más opciones", g, K_OPT, arr, order)
             }

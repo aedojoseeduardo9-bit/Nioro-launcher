@@ -136,7 +136,7 @@ class PlaylistView(ctx: Context) : AppsView(ctx) {
         subPaint.textSize = dp(13f)
         titlePaint.textSize = dp(27f)
         barPaint.textSize = dp(16f)
-        panel.set(dp(10f), insetTop + (if (keyboardUp) dp(16f) else dp(76f)), w - dp(10f), h - bottomInset - dp(10f))
+        panel.set(dp(10f), insetTop + (if (keyboardUp) dp(16f) else topGap(dp(76f))), w - dp(10f), h - bottomInset - dp(10f))
         clip.reset()
         clip.addRoundRect(panel.left + dp(1.5f), panel.top + dp(1.5f), panel.right - dp(1.5f), panel.bottom - dp(1.5f), dp(28.5f), dp(28.5f), android.graphics.Path.Direction.CW)
         headH = if (searching) dp(8f) else dp(244f)
@@ -584,7 +584,7 @@ class PlaylistView(ctx: Context) : AppsView(ctx) {
                     invalidate()
                 } else if (mode == 1) {
                     // desde arriba del todo, tirar hacia abajo cierra la vista
-                    if (atTop && !closing && S.b(S.DR_SWIPE_CLOSE) && dy > dp(120f) && abs(dy) > abs(dx) * 1.4f) {
+                    if (atTop && !closing && !embedded && S.b(S.DR_SWIPE_CLOSE) && dy > dp(120f) && abs(dy) > abs(dx) * 1.4f) {
                         closing = true
                         listener?.onClose()
                     }

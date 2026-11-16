@@ -50,6 +50,10 @@ class HomeView(ctx: Context) : View(ctx) {
         fun drawerDrag(stage: Int, p: Float, velocity: Float) {}
         /** el dedo bajó sobre el botón de la vista de apps: se puede preparar antes de abrir */
         fun prewarmDrawer() {}
+        /** zona libre entre el reloj y el dock (la usa el modo de pantalla Panal, Rueda...) */
+        fun screenArea(top: Float, bottom: Float) {}
+        /** modo edición o menú del reloj abiertos (0..1): la capa del modo de pantalla se aparta */
+        fun homeCover(k: Float) {}
     }
 
     class Slot(val kind: Int, val key: String?) { // 0 app, 1 launchpad, 2 recientes, 3 separador
@@ -499,6 +503,11 @@ class HomeView(ctx: Context) : View(ctx) {
     /** Modo edición estilo One UI: las páginas se encogen y aparece la barra inferior. */
     fun enterEdit() {
         if (isEditing) return
+        // sin páginas (modos Panal, Rueda, Zen...) no hay iconos que ordenar: se abre el menú del inicio
+        if (pagesOff) {
+            host?.showHomeMenu(if (downX > 0f) downX else width / 2f, if (downY > 0f) downY else height / 2f)
+            return
+        }
         editGesture = false
         Mo.tune(editSp, S.MO_EDIT_IN, 260f, 0.78f)
         editSp.to(1f)
@@ -565,7 +574,7 @@ class HomeView(ctx: Context) : View(ctx) {
         val st = dockDesignStamp()
         val before = dockStamp
         dockStamp = st
-        if (before == Long.MIN_VALUE || before == st || !S.b(S.K_SHOW)) return
+        if (before == Long.MIN_VALUE || before == st || !dockShown()) return
         Mo.tune(dockMorph, S.MO_DOCK_MAG, 190f, 0.5f)
         dockMorph.snap(0f)
         dockMorph.to(1f)
@@ -582,6 +591,7 @@ class HomeView(ctx: Context) : View(ctx) {
     // ---------------------------------------------------------------- Layout
     /** pantallas con contenido (o vacías añadidas a propósito) */
     private fun realPages(): Int {
+        if (pagesOff) return 1
         val c = if (cap < 1) 1 else cap
         return max(1, ceil(homeKeys.size / c.toFloat()).toInt())
     }
@@ -647,8 +657,11 @@ class HomeView(ctx: Context) : View(ctx) {
         if (w <= 0f || h <= 0f) return
         iconPx = dp(Prefs.iconDp.toFloat())
         cols = Prefs.columns.coerceIn(3, 6)
+        val sm = ScreenModes.mode()
+        pagesOff = ScreenModes.pagesOff(sm)
+        dockOff = ScreenModes.dockOff(sm)
         applyStyles()
-        val dockOn = S.b(S.K_SHOW)
+        val dockOn = dockShown()
         val dockBottom = h - insetBottom - dp(S.f(S.K_BOTTOM))
         dockH = if (dockOn) dp(Prefs.dockDp.toFloat()) + dp(S.f(S.K_EXTRA_H)) else 0f
         dockCy = dockBottom - dockH / 2f
@@ -681,7 +694,15 @@ class HomeView(ctx: Context) : View(ctx) {
         rebuildDock()
         // primera vez: se apunta el diseño actual del dock (para animar si luego cambia)
         if (dockStamp == Long.MIN_VALUE) dockStamp = dockDesignStamp()
+        if (pagesOff && pageSp.value != 0f) pageSp.snap(0f)
+        host?.screenArea(gridTop - dp(6f), if (dockOn) dockTopY() - dp(2f) else h - insetBottom - dp(8f))
     }
+
+    /** modo de pantalla: sin páginas de iconos / sin dock */
+    private var pagesOff = false
+    private var dockOff = false
+    private fun dockShown(): Boolean = S.b(S.K_SHOW) && !dockOff
+    private var lastCover = 0f
 
     private fun applyStyles() {
         if (!isClockEditing) {
@@ -1125,8 +1146,10 @@ class HomeView(ctx: Context) : View(ctx) {
             c.scale(s, s, width / 2f, editPivotY())
         }
         drawClock(c, enterOn)
-        drawPages(c, enterOn)
-        drawDots(c)
+        if (!pagesOff) {
+            drawPages(c, enterOn)
+            drawDots(c)
+        }
         if (ed > 0.001f) c.restore()
         if (ed < 0.999f) {
             c.save()
@@ -1142,6 +1165,11 @@ class HomeView(ctx: Context) : View(ctx) {
         if (clockEd.value > 0.001f) drawClockEditor(c, clockEd.value)
         c.restore()
         if (S.b(S.P_FPS)) drawFps(c)
+        val cov = max(ed, clockEd.value)
+        if (abs(cov - lastCover) > 0.002f || (cov == 0f) != (lastCover == 0f)) {
+            lastCover = cov
+            host?.homeCover(cov)
+        }
     }
 
     // ================================================================ Editor del reloj
@@ -1876,7 +1904,7 @@ class HomeView(ctx: Context) : View(ctx) {
         val n = max(1, editCount)
         val gap = width / n.toFloat()
         out[0] = gap * slot + gap / 2f
-        out[1] = (if (S.b(S.K_SHOW)) dockCy else height - insetBottom - dp(50f)) - dp(8f)
+        out[1] = (if (dockShown()) dockCy else height - insetBottom - dp(50f)) - dp(8f)
     }
 
     private val btnTmp = FloatArray(2)
@@ -2503,7 +2531,7 @@ class HomeView(ctx: Context) : View(ctx) {
     }
 
     private fun drawDock(c: Canvas, enterOn: Boolean) {
-        if (slots.isEmpty() || !S.b(S.K_SHOW)) return
+        if (slots.isEmpty() || !dockShown()) return
         val w = width.toFloat()
         val sepW = dp(14f)
         var total = 0f
@@ -2634,6 +2662,7 @@ class HomeView(ctx: Context) : View(ctx) {
 
     // ---------------------------------------------------------------- Tacto
     private fun homeKeyAt(x: Float, y: Float): String? {
+        if (pagesOff) return null
         val pg = pageSp.value.roundToInt()
         val local = cellAt(x, y, true)
         if (local < 0) return null
@@ -2805,7 +2834,7 @@ class HomeView(ctx: Context) : View(ctx) {
                 touchMode = M_NONE
                 moved = false
                 vTriggered = false
-                inDock = S.b(S.K_SHOW) && y > dockTopY()
+                inDock = dockShown() && y > dockTopY()
                 pageStart = pageSp.value
                 pageSp.snap(pageSp.value)
                 downKey = if (inDock) dockKeyAt(x) else homeKeyAt(x, y)
@@ -2913,6 +2942,7 @@ class HomeView(ctx: Context) : View(ctx) {
                         host?.drawerDrag(1, clamp01(-dy / drawerDragDist), 0f)
                         return true
                     }
+                    if (touchMode == M_PAGE && pagesOff) return true
                     if (touchMode == M_PAGE) {
                         if (dotsBoost.target < 1f) {
                             dotsBoost.to(1f)
@@ -3111,7 +3141,7 @@ class HomeView(ctx: Context) : View(ctx) {
                 iconFromFinger(key, de)
                 makeGhost(key)
                 HomeSlots.remove(homeKeys, key)
-            } else if (S.b(S.K_SHOW) && y > dockTopY() - dp(4f)) {
+            } else if (dockShown() && y > dockTopY() - dp(4f)) {
                 if (key !in dockKeys && dockKeys.size < S.i(S.K_MAX)) {
                     dockKeys.add(key)
                     HomeSlots.remove(homeKeys, key)
