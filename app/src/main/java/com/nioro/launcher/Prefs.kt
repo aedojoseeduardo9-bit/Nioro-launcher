@@ -112,6 +112,12 @@ object Prefs {
     fun setPlaylistOrder(v: List<String>) = putList("playlistOrder", v)
     /** Playlist: true = en el orden propio, false = A-Z */
     var playlistMine by BoolPref("playlistMine", true)
+    /** modo de pantalla aplicado la última vez (para saber cuándo cambia) */
+    var lastScreen by IntPref("lastScreen", 0)
+    /** copia del inicio guardada al entrar en el modo "Sin cajón" */
+    var homeBackupSaved by BoolPref("homeBackupSaved", false)
+    fun homeBackup(): MutableList<String> = getList("homeBackup")
+    fun setHomeBackup(v: List<String>) = putList("homeBackup", v)
     fun hidden(): MutableList<String> = getList("hidden")
     fun setHidden(v: List<String>) = putList("hidden", v)
     fun knownKeys(): MutableList<String> = getList("knownKeys")

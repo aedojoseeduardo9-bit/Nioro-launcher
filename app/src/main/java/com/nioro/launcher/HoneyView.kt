@@ -201,7 +201,7 @@ class HoneyView(ctx: Context) : AppsView(ctx) {
         if (w <= 0f) return
         iconS = dp(60f)
         d = iconS * 1.16f
-        top = insetTop + (if (keyboardUp) dp(20f) else dp(78f))
+        top = insetTop + (if (keyboardUp) dp(20f) else topGap(dp(78f)))
         // con nombres, abajo queda sitio para la cápsula del nombre
         bottom = h - bottomInset - (if (showNames) dp(70f) else dp(16f))
         cx0 = w / 2f

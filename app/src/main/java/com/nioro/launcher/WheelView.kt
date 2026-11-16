@@ -184,7 +184,7 @@ class WheelView(ctx: Context) : AppsView(ctx) {
         iconS = dp(56f)
         radius = w * 0.8f
         bottomY = h - bottomInset - dp(10f)
-        topY = insetTop + (if (keyboardUp) dp(14f) else dp(76f))
+        topY = insetTop + (if (keyboardUp) dp(14f) else topGap(dp(76f)))
         wcx = w / 2f
         // el centro de la rueda queda por debajo de la pantalla: se ve solo su arco de arriba
         wcy = bottomY + radius * 0.42f

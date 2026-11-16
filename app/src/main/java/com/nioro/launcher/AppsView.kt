@@ -44,6 +44,10 @@ abstract class AppsView(ctx: Context) : View(ctx) {
     /** el teclado aparece/desaparece (se llama en cada fotograma de su animación) */
     open fun onImeChanged() {}
     var anchorX = 0f
+    /** la vista hace de pantalla de inicio (modos de pantalla): arriba no hay buscador que esquivar */
+    var embedded = false
+    /** hueco de arriba para la barra de búsqueda (sin buscador, casi nada) */
+    protected fun topGap(normal: Float): Float = if (embedded) dp(6f) else normal
 
     protected var apps: List<AppEntry> = emptyList()
     protected var shown: List<AppEntry> = emptyList()
@@ -135,6 +139,15 @@ abstract class AppsView(ctx: Context) : View(ctx) {
     open fun onDataChanged() {}
     open fun onOpen() {}
     open fun onClosed() {}
+
+    override fun draw(c: Canvas) {
+        if (!embedded) return super.draw(c)
+        // como pantalla de inicio no se pinta encima del reloj ni del dock (la colmena se puede arrastrar)
+        c.save()
+        c.clipRect(0f, insetTop, width.toFloat(), height - insetBottom)
+        super.draw(c)
+        c.restore()
+    }
 
     override fun onDetachedFromWindow() {
         uiHandler.removeCallbacksAndMessages(null)
