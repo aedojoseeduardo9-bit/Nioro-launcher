@@ -768,7 +768,8 @@ class HomeView(ctx: Context) : View(ctx) {
         val hadDock = slots.isNotEmpty() && dockUnit > 0f
         val oldRest = if (hadDock) restWidth() + dockShrink.value else 0f
         slots.clear()
-        val lp = S.b(S.K_LAUNCHPAD)
+        // modo "Sin cajón": sin botón de apps en el dock (no hay menú de apps que abrir)
+        val lp = S.b(S.K_LAUNCHPAD) && ScreenModes.mode() != ScreenModes.NO_DRAWER
         val rc = S.b(S.K_RECENTS)
         val lpRight = S.b(S.K_LP_RIGHT)
         if (lp && !lpRight) slots.add(Slot(1, null))
@@ -2933,7 +2934,7 @@ class HomeView(ctx: Context) : View(ctx) {
                         moved = true
                         touchMode = if (abs(dx) > abs(dy)) M_PAGE else M_VSWIPE
                         // hacia arriba y con la acción "vista de apps": la vista sigue al dedo desde el primer momento
-                        if (touchMode == M_VSWIPE && dy < 0f && S.gestAction(S.G_UP) == S.A_DRAWER) {
+                        if (touchMode == M_VSWIPE && dy < 0f && S.gestAction(S.G_UP) == S.A_DRAWER && ScreenModes.mode() != ScreenModes.NO_DRAWER) {
                             touchMode = M_DRAWER
                             host?.drawerDrag(0, 0f, 0f)
                         }

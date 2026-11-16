@@ -28,35 +28,36 @@ import kotlin.math.sqrt
 object ScreenModes {
     const val CLASSIC = 0
     const val NO_DRAWER = 1
-    const val HONEY = 2
-    const val WHEEL = 3
+    const val MOSAIC = 2
+    const val CARDS = 3
     const val MINIMAL = 4
     const val ZEN = 5
-    const val LIST = 6
+    const val SIDEBAR = 6
 
-    val NAMES = arrayOf("Clásico", "Sin cajón", "Panal", "Rueda", "Minimalista", "Zen", "Lista")
+    // los números (0..6) son los valores guardados: no se reordenan
+    val NAMES = arrayOf("Clásico", "Sin cajón", "Mosaico", "Tarjetas", "Minimalista", "Zen", "Barra lateral")
     val DESC = arrayOf(
         "Páginas de iconos y dock. Desliza hacia arriba para ver todas las apps.",
-        "Todas tus apps viven en las páginas del inicio, como en el iPhone. Deslizar hacia arriba abre el buscador. Si vuelves a otro modo, tu inicio queda como estaba.",
-        "El inicio es una colmena con todas tus apps: arrástrala con el dedo y las del centro se ven más grandes.",
-        "Una rueda con todas tus apps encima del dock: gírala con el dedo y toca la app grande para abrirla.",
+        "Sin menú de apps: todas tus apps viven en las páginas del inicio, como en el iPhone. Deslizar hacia arriba no abre nada. Si vuelves a otro modo, tu inicio queda como estaba.",
+        "Todas tus apps en baldosas de cristal de dos tamaños, como un muro de azulejos. Desliza arriba y abajo.",
+        "Una app por tarjeta grande: pásalas a los lados con el dedo y toca la del centro para abrirla.",
         "Solo el reloj y una lista de texto con tus apps favoritas (las del dock y el inicio). Sin iconos ni dock.",
         "Pantalla limpia: solo el reloj y el dock. Desliza hacia arriba para ver tus apps.",
-        "Tus apps en una lista estilo playlist encima del dock, con tu propio orden."
+        "Una columna de iconos en el borde derecho, a mano del pulgar, con su nombre al lado. El resto queda libre para el reloj."
     )
 
     fun mode(): Int = S.i(S.H_SCREEN).coerceIn(0, NAMES.size - 1)
     /** sin páginas de iconos en el inicio */
-    fun pagesOff(m: Int = mode()): Boolean = m >= HONEY
+    fun pagesOff(m: Int = mode()): Boolean = m >= MOSAIC
     /** sin dock */
     fun dockOff(m: Int = mode()): Boolean = m == MINIMAL
     /** el centro del inicio lo ocupa una vista de apps (ScreenHost) */
-    fun embedded(m: Int): Boolean = m == HONEY || m == WHEEL || m == MINIMAL || m == LIST
+    fun embedded(m: Int): Boolean = m == MOSAIC || m == CARDS || m == MINIMAL || m == SIDEBAR
 }
 
 /**
- * Aloja la vista de apps que hace de pantalla de inicio en los modos Panal, Rueda, Minimalista y
- * Lista. Va justo encima de HomeView (que sigue dibujando reloj y dock) y solo recibe los toques que
+ * Aloja el diseño que hace de pantalla de inicio en los modos Mosaico, Tarjetas, Minimalista y
+ * Barra lateral. Va justo encima de HomeView (que sigue dibujando reloj y dock) y solo recibe los toques que
  * caen en su zona; el resto sigue llegando al inicio (deslizar, reloj, dock...).
  */
 class ScreenHost(ctx: Context) : FrameLayout(ctx) {
@@ -87,9 +88,9 @@ class ScreenHost(ctx: Context) : FrameLayout(ctx) {
             kind = want
             if (want >= 0) {
                 val v: AppsView = when (want) {
-                    ScreenModes.HONEY -> HoneyView(context)
-                    ScreenModes.WHEEL -> WheelView(context)
-                    ScreenModes.LIST -> PlaylistView(context)
+                    ScreenModes.MOSAIC -> MosaicView(context)
+                    ScreenModes.CARDS -> CardsView(context)
+                    ScreenModes.SIDEBAR -> SideBarView(context)
                     else -> MinimalView(context)
                 }
                 v.embedded = true
@@ -446,33 +447,43 @@ class ScreenModeThumb(ctx: Context, val idx: Int) : View(ctx) {
                     c.drawRoundRect(r.centerX() - u * 0.9f, dockTop - u * 0.45f, r.centerX() + u * 0.9f, dockTop - u * 0.25f, u, u, p)
                 }
             }
-            ScreenModes.HONEY -> {
-                val d = u * 1.55f
-                val cyy = (top + bottom) / 2f
+            ScreenModes.MOSAIC -> {
+                val side = u * 0.8f
+                val g = u * 0.35f
+                val cell = (pw - side * 2f - g * 3f) / 4f
+                var y = top
+                var block = 0
                 var k = 0
-                for (row in -2..2) for (col in -3..3) {
-                    val x = r.centerX() + (col + if (row % 2 != 0) 0.5f else 0f) * d
-                    val y = cyy + row * d * 0.87f
-                    val dist = sqrt(((x - r.centerX()) * (x - r.centerX()) + (y - cyy) * (y - cyy)).toDouble()).toFloat()
-                    val s = (u * 1.35f * (1f - dist / (u * 7f))).coerceAtLeast(0f)
-                    if (s > u * 0.25f) {
-                        p.color = cols[k % cols.size]
-                        c.drawCircle(x, y, s / 2f, p)
+                while (y + cell < bottom) {
+                    val bigLeft = block % 2 == 0
+                    val bx = r.left + side + if (bigLeft) 0f else (cell + g) * 2f
+                    val sx = r.left + side + if (bigLeft) (cell + g) * 2f else 0f
+                    p.color = cols[k++ % cols.size]
+                    c.drawRoundRect(bx, y, bx + cell * 2f + g, y + cell * 2f + g, u * 0.5f, u * 0.5f, p)
+                    for (s in 0 until 4) {
+                        p.color = cols[k++ % cols.size]
+                        val xx = sx + (s % 2) * (cell + g)
+                        val yy = y + (s / 2) * (cell + g)
+                        c.drawRoundRect(xx, yy, xx + cell, yy + cell, u * 0.3f, u * 0.3f, p)
                     }
-                    k++
+                    y += cell * 2f + g * 2f
+                    block++
                 }
             }
-            ScreenModes.WHEEL -> {
-                val wcx = r.centerX()
-                val rad = pw * 0.62f
-                val wcy = bottom + rad * 0.55f
-                for (k in -3..3) {
-                    val a = Math.toRadians((-90 + k * 22).toDouble())
-                    val x = wcx + cos(a).toFloat() * rad
-                    val y = wcy + sin(a).toFloat() * rad
-                    tile(c, x, y, u * (if (k == 0) 1.5f else 1.1f), k + 3)
+            ScreenModes.CARDS -> {
+                val chh = (bottom - top) * 0.82f
+                val cww = pw * 0.56f
+                val cyy = (top + bottom) / 2f
+                for (k in intArrayOf(-1, 1, 0)) {
+                    val s = if (k == 0) 1f else 0.8f
+                    val x = r.centerX() + k * cww * 0.95f
+                    p.color = cols[(k + 3) % cols.size]
+                    p.alpha = if (k == 0) 255 else 140
+                    c.drawRoundRect(x - cww * s / 2f, cyy - chh * s / 2f, x + cww * s / 2f, cyy + chh * s / 2f, u * 0.8f, u * 0.8f, p)
                 }
-                tile(c, wcx, (top + wcy - rad) / 2f, u * 2.6f, 4)
+                p.alpha = 255
+                p.color = 0xEEFFFFFF.toInt()
+                c.drawRoundRect(r.centerX() - u * 1.2f, cyy - u * 1.8f, r.centerX() + u * 1.2f, cyy + u * 0.6f, u * 0.5f, u * 0.5f, p)
             }
             ScreenModes.MINIMAL -> {
                 p.color = 0xD9FFFFFF.toInt()
@@ -488,21 +499,19 @@ class ScreenModeThumb(ctx: Context, val idx: Int) : View(ctx) {
                 p.color = 0x66FFFFFF
                 c.drawRoundRect(r.centerX() - u * 2f, clockY + u * 1.1f, r.centerX() + u * 2f, clockY + u * 1.5f, u * 0.2f, u * 0.2f, p)
             }
-            ScreenModes.LIST -> {
+            ScreenModes.SIDEBAR -> {
+                val ic = u * 1.3f
+                val x = r.right - u * 1.2f
                 p.color = 0x33FFFFFF
-                q.set(r.left + u * 0.6f, top - u * 0.4f, r.right - u * 0.6f, bottom)
-                c.drawRoundRect(q, u * 0.8f, u * 0.8f, p)
-                // portada
-                p.color = cols[4]
-                c.drawRoundRect(q.left + u * 0.6f, q.top + u * 0.6f, q.left + u * 2.6f, q.top + u * 2.6f, u * 0.4f, u * 0.4f, p)
-                val rowH = u * 1.25f
-                var y = q.top + u * 3.4f
+                c.drawRoundRect(x - ic * 0.8f, top - u * 0.3f, x + ic * 0.8f, bottom, u, u, p)
+                var y = top + ic * 0.6f
                 var k = 0
-                while (y + rowH < q.bottom) {
-                    tile(c, q.left + u * 1.2f, y + rowH / 2f, u * 0.9f, k)
-                    p.color = 0xBFFFFFFF.toInt()
-                    c.drawRoundRect(q.left + u * 2.2f, y + rowH * 0.38f, q.right - u * (1.6f + (k % 3)), y + rowH * 0.62f, u * 0.2f, u * 0.2f, p)
-                    y += rowH
+                while (y + ic / 2f < bottom) {
+                    tile(c, x, y, ic, k)
+                    p.color = 0x99FFFFFF.toInt()
+                    val lw = u * (2f + (k * 3 % 4))
+                    c.drawRoundRect(x - ic - lw, y - u * 0.25f, x - ic, y + u * 0.25f, u * 0.25f, u * 0.25f, p)
+                    y += ic * 1.35f
                     k++
                 }
             }

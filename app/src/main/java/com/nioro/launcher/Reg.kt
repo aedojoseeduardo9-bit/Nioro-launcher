@@ -605,7 +605,7 @@ object S {
     val H_SCALE_PANEL = num("home.panelscale", "Alejar el inicio al abrir paneles", C_HOME, HG, 0f, 25f, 8f)
     val H_DEFAULT_PAGE = num("home.defpage", "Página principal", C_HOME, HG, 1f, 6f, 1f, "")
     val H_LAYOUT = choice("home.layout", "Organización de los iconos", C_HOME, HG, HomeLayout.NAMES, 0, "Panal, Sonrisa, Ola, Dividida... (las apps no cambian de sitio)")
-    val H_SCREEN = choice("home.screen", "Modo de pantalla", C_HOME, HG, ScreenModes.NAMES, 0, "Clásico, sin cajón, panal, rueda, minimalista, zen o lista")
+    val H_SCREEN = choice("home.screen", "Modo de pantalla", C_HOME, HG, ScreenModes.NAMES, 0, "Clásico, sin cajón, mosaico, tarjetas, minimalista, zen o barra lateral")
     private const val DG = "Puntos de página"
     val D_SHOW = bool("dots.show", "Mostrar indicador de páginas", C_HOME, DG, true)
     val D_STYLE = choice("dots.style", "Estilo", C_HOME, DG, arrayOf("Puntos", "Líneas", "Cápsula activa", "Números", "Píldora One UI"), 4)
@@ -748,7 +748,8 @@ object S {
     val L_SCRIM = color("col.scrim", "Color de fondo de los paneles", C_COLOR, LG, 0)
     val L_SETTINGS_BG = choice("col.setbg", "Fondo de los ajustes", C_COLOR, LG, arrayOf("Noche azul", "Morado", "Negro puro", "Océano", "Atardecer", "Bosque"), 0)
 
-    // Efectos animados de color (estelas como las de Color Flow, explosiones como las de StarNova)
+    // Efectos animados de color (explosiones al tocar y al abrir, barrido al volver). La estela del dedo
+    // se quitó a petición del dueño: su ajuste queda declarado solo para no mover los demás.
     private const val FXG = "Efectos de color"
     val FX_TRAIL = choice("fx.trail", "Estela al deslizar el dedo", C_COLOR, FXG, ColorFx.TRAILS, 1, "Una estela de color sigue a tu dedo por el inicio")
     val FX_TAP = choice("fx.tap", "Efecto al tocar la pantalla", C_COLOR, FXG, ColorFx.BURSTS, 0)
@@ -756,7 +757,7 @@ object S {
     val FX_ENTER = choice("fx.enter", "Efecto al volver al inicio", C_COLOR, FXG, ColorFx.ENTERS, 0)
     val FX_PAL = choice("fx.pal", "Colores de los efectos", C_COLOR, FXG, ColorFx.PALS, 0)
     val FX_SIZE = num("fx.size", "Tamaño de los efectos", C_COLOR, FXG, 50f, 200f, 100f)
-    val FX_APPS = bool("fx.apps", "También sobre la vista de apps", C_COLOR, FXG, false, "La estela y el toque también al buscar o abrir apps")
+    val FX_APPS = bool("fx.apps", "También sobre la vista de apps", C_COLOR, FXG, false, "El efecto al tocar también al buscar o abrir apps")
 
     // ==================================================================
     // 15) RENDIMIENTO
