@@ -39,7 +39,7 @@ object ScreenModes {
     val DESC = arrayOf(
         "Páginas de iconos y dock. Desliza hacia arriba para ver todas las apps.",
         "Sin menú de apps: todas tus apps viven en las páginas del inicio, como en el iPhone. Deslizar hacia arriba no abre nada. Si vuelves a otro modo, tu inicio queda como estaba.",
-        "Todas tus apps en baldosas de cristal de dos tamaños, como un muro de azulejos. Desliza arriba y abajo. Sin menú de apps: el inicio ya lo es.",
+        "Calcado de Windows Phone: mosaicos de colores lisos en cuatro tamaños, mosaicos vivos que giran, inclinación al tocar y torniquete al abrir. Mantén pulsado un mosaico para moverlo o cambiar su tamaño. Sin menú de apps.",
         "Una app por tarjeta grande: pásalas a los lados con el dedo y toca la del centro para abrirla. Sin menú de apps: el inicio ya lo es.",
         "Solo el reloj y todas tus apps en una lista de texto grande que se desplaza. Sin iconos, sin dock y sin menú de apps.",
         "Pantalla limpia: solo el reloj y el dock. Desliza hacia arriba para ver tus apps.",
@@ -59,6 +59,9 @@ object ScreenModes {
     }
     /** ¿se puede quitar el dock en este modo? */
     fun dockOptional(m: Int): Boolean = m == MOSAIC || m == CARDS || m == SIDEBAR
+    /** el Mosaico, como Windows Phone, no lleva el reloj grande del inicio (salvo que se pida) */
+    fun clockOff(m: Int = mode()): Boolean = m == MOSAIC && !S.b(S.MZ_CLOCK)
+
     /** sin menú de apps: "Sin cajón" y los modos cuyo inicio ya muestra todas las apps */
     fun drawerOff(m: Int = mode()): Boolean = m == NO_DRAWER || embedded(m)
     /** el centro del inicio lo ocupa una vista de apps (ScreenHost) */
@@ -98,7 +101,7 @@ class ScreenHost(ctx: Context) : FrameLayout(ctx) {
             kind = want
             if (want >= 0) {
                 val v: AppsView = when (want) {
-                    ScreenModes.MOSAIC -> MosaicView(context)
+                    ScreenModes.MOSAIC -> MetroView(context)
                     ScreenModes.CARDS -> CardsView(context)
                     ScreenModes.SIDEBAR -> SideBarView(context)
                     else -> MinimalListView(context)
@@ -127,6 +130,9 @@ class ScreenHost(ctx: Context) : FrameLayout(ctx) {
     fun refreshData() {
         view?.setData(AppRepo.sorted(AppRepo.visible()), AppRepo.sorted(AppRepo.apps))
     }
+
+    /** atrás o inicio: el Mosaico sale primero de su modo edición; true si lo hizo */
+    fun back(): Boolean = (view as? MetroView)?.exitEdit() == true
 
     /** zona libre entre el reloj y el dock (coordenadas de la pantalla) */
     fun setArea(top: Float, bottom: Float) {
@@ -248,7 +254,7 @@ class ScreenModeThumb(ctx: Context, val idx: Int) : View(ctx) {
         c.clipPath(clip)
         c.drawRect(r, bg)
         val u = pw / 10f
-        // reloj (todos los modos)
+        // reloj (todos los modos menos el Mosaico, que lo dibuja todo encima)
         p.color = 0xEEFFFFFF.toInt()
         val clockY = r.top + u * (if (idx == ScreenModes.MINIMAL || idx == ScreenModes.ZEN) 3.2f else 2.2f)
         val cw = if (idx == ScreenModes.ZEN) u * 5f else u * 3.6f
@@ -278,26 +284,28 @@ class ScreenModeThumb(ctx: Context, val idx: Int) : View(ctx) {
                 }
             }
             ScreenModes.MOSAIC -> {
-                val side = u * 0.8f
-                val g = u * 0.35f
-                val cell = (pw - side * 2f - g * 3f) / 4f
-                var y = top
-                var block = 0
+                // fondo negro y mosaicos planos de color de acento, como Windows Phone
+                p.color = Color.BLACK
+                c.drawRect(r, p)
+                val g = u * 0.22f
+                val cell = (pw - g * 7f) / 6f
+                val y0 = r.top + u * 1.2f
+                val acc = intArrayOf(0xFF1BA1E2.toInt(), 0xFF0050EF.toInt(), 0xFF00ABA9.toInt(), 0xFFE51400.toInt(), 0xFF60A917.toInt(), 0xFFF0A30A.toInt())
+                // (columna, fila, ancho, alto) en casillas pequeñas
+                val tiles = intArrayOf(0, 0, 2, 2, 2, 0, 2, 2, 4, 0, 1, 1, 5, 0, 1, 1, 4, 1, 1, 1, 5, 1, 1, 1,
+                    0, 2, 4, 2, 4, 2, 2, 2, 0, 4, 2, 2, 2, 4, 1, 1, 3, 4, 1, 1, 2, 5, 1, 1, 3, 5, 1, 1, 4, 4, 2, 2,
+                    0, 6, 2, 2, 2, 6, 4, 2, 0, 8, 2, 2, 2, 8, 2, 2, 4, 8, 2, 2)
                 var k = 0
-                while (y + cell < bottom) {
-                    val bigLeft = block % 2 == 0
-                    val bx = r.left + side + if (bigLeft) 0f else (cell + g) * 2f
-                    val sx = r.left + side + if (bigLeft) (cell + g) * 2f else 0f
-                    p.color = cols[k++ % cols.size]
-                    c.drawRoundRect(bx, y, bx + cell * 2f + g, y + cell * 2f + g, u * 0.5f, u * 0.5f, p)
-                    for (s in 0 until 4) {
-                        p.color = cols[k++ % cols.size]
-                        val xx = sx + (s % 2) * (cell + g)
-                        val yy = y + (s / 2) * (cell + g)
-                        c.drawRoundRect(xx, yy, xx + cell, yy + cell, u * 0.3f, u * 0.3f, p)
+                while (k + 3 < tiles.size) {
+                    val x = r.left + g + tiles[k] * (cell + g)
+                    val y = y0 + tiles[k + 1] * (cell + g)
+                    val w = tiles[k + 2] * cell + (tiles[k + 2] - 1) * g
+                    val h = tiles[k + 3] * cell + (tiles[k + 3] - 1) * g
+                    if (y + h < r.bottom - u * 0.4f) {
+                        p.color = if ((k / 4) % 5 == 3) acc[(k / 4) % acc.size] else acc[0]
+                        c.drawRect(x, y, x + w, y + h, p)
                     }
-                    y += cell * 2f + g * 2f
-                    block++
+                    k += 4
                 }
             }
             ScreenModes.CARDS -> {

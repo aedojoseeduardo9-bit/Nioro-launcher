@@ -349,7 +349,7 @@ class HomeView(ctx: Context) : View(ctx) {
         if (touchMode == M_NONE && !moved && k == null && !inDock) {
             touchMode = M_MENU
             unpress()
-            if (Prefs.clockStyle != 2 && (clockRect.contains(downX, downY) || dateRect.contains(downX, downY))) {
+            if (Prefs.clockStyle != 2 && !ScreenModes.clockOff() && (clockRect.contains(downX, downY) || dateRect.contains(downX, downY))) {
                 enterClockEdit(dragging = true)
             } else {
                 host?.gesture(S.G_LONG)
@@ -666,14 +666,15 @@ class HomeView(ctx: Context) : View(ctx) {
         dockH = if (dockOn) dp(Prefs.dockDp.toFloat()) + dp(S.f(S.K_EXTRA_H)) else 0f
         dockCy = dockBottom - dockH / 2f
         dotsY = if (dockOn) dockBottom - dockH - dp(22f) else h - insetBottom - dp(28f)
-        gridTop = insetTop + when (Prefs.clockStyle) {
+        val clockSt = if (ScreenModes.clockOff(sm)) 2 else Prefs.clockStyle
+        gridTop = insetTop + when (clockSt) {
             1 -> dp(232f)
             2 -> dp(28f)
             3 -> dp(296f)
             4 -> dp(262f)
             6 -> dp(112f)
-            else -> if (Prefs.clockStyle >= 8) dp(ClockFaces.gridTopDp(Prefs.clockStyle)) else dp(146f)
-        } + dp(S.f(S.H_TOP)) + (if (S.b(S.DT_GREETING) && Prefs.clockStyle != 2) dp(22f) else 0f)
+            else -> if (clockSt >= 8) dp(ClockFaces.gridTopDp(clockSt)) else dp(146f)
+        } + dp(S.f(S.H_TOP)) + (if (S.b(S.DT_GREETING) && clockSt != 2) dp(22f) else 0f)
         val avail = dotsY - dp(16f) - gridTop - dp(S.f(S.H_BOTTOM))
         val labelH = if (Prefs.labels) dp(Prefs.labelSize + 8f) else 0f
         val minCell = iconPx + labelH + dp(24f)
@@ -1563,7 +1564,7 @@ class HomeView(ctx: Context) : View(ctx) {
 
     /** entra al editor; si viene de una pulsación larga, el mismo dedo ya puede arrastrar el reloj */
     fun enterClockEdit(dragging: Boolean = false) {
-        if (Prefs.clockStyle == 2 || isEditing || isClockEditing) return
+        if (Prefs.clockStyle == 2 || ScreenModes.clockOff() || isEditing || isClockEditing) return
         isClockEditing = true
         host?.dismissMenu()
         Mo.tune(clockEd, S.MO_EDIT_IN, 300f, 0.5f)
@@ -1961,7 +1962,7 @@ class HomeView(ctx: Context) : View(ctx) {
     }
 
     private fun drawClock(c: Canvas, enterOn: Boolean) {
-        if (Prefs.clockStyle == 2) {
+        if (Prefs.clockStyle == 2 || ScreenModes.clockOff()) {
             updateClock()
             clockRect.setEmpty()
             dateRect.setEmpty()

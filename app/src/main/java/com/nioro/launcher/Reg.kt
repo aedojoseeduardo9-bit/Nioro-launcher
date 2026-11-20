@@ -606,9 +606,22 @@ object S {
     val H_DEFAULT_PAGE = num("home.defpage", "Página principal", C_HOME, HG, 1f, 6f, 1f, "")
     val H_LAYOUT = choice("home.layout", "Organización de los iconos", C_HOME, HG, HomeLayout.NAMES, 0, "Panal, Sonrisa, Ola, Dividida... (las apps no cambian de sitio)")
     val H_SCREEN = choice("home.screen", "Modo de pantalla", C_HOME, HG, ScreenModes.NAMES, 0, "Clásico, sin cajón, mosaico, tarjetas, minimalista, zen o barra lateral")
-    val H_DOCK_MOSAIC = bool("home.dock.mosaic", "Dock en el modo Mosaico", C_HOME, HG, true)
+    // Windows Phone no tiene dock: en el Mosaico viene apagado
+    val H_DOCK_MOSAIC = bool("home.dock.mosaic", "Dock en el modo Mosaico", C_HOME, HG, false)
     val H_DOCK_CARDS = bool("home.dock.cards", "Dock en el modo Tarjetas", C_HOME, HG, true)
     val H_DOCK_SIDE = bool("home.dock.side", "Dock en el modo Barra lateral", C_HOME, HG, true)
+    /** grupo de ajustes del modo Mosaico (estilo Windows Phone) */
+    const val MZG = "Mosaico (estilo Windows Phone)"
+    val MZ_ACCENT = choice("mz.accent", "Color de los mosaicos", C_HOME, MZG, MetroView.ACCENT_NAMES, 4, "Los 20 colores de acento de Windows Phone, o el color de cada app")
+    val MZ_BG = choice("mz.bg", "Fondo", C_HOME, MZG, MetroView.BG_NAMES, 0)
+    val MZ_TRANSP = bool("mz.transp", "Mosaicos transparentes", C_HOME, MZG, false, "El fondo de pantalla solo se ve a través de los mosaicos (Windows Phone 8.1)")
+    val MZ_COLS = choice("mz.cols", "Columnas", C_HOME, MZG, MetroView.COL_NAMES, 1)
+    val MZ_ICONS = choice("mz.icons", "Iconos", C_HOME, MZG, MetroView.ICON_NAMES, 0, "Blancos: los iconos temáticos de Android 13 (si la app los trae)")
+    val MZ_LABELS = bool("mz.labels", "Nombres en los mosaicos", C_HOME, MZG, true)
+    val MZ_LIVE = bool("mz.live", "Mosaicos vivos", C_HOME, MZG, true, "De vez en cuando un mosaico gira y enseña su reverso; Reloj y Calendario muestran la hora y el día")
+    val MZ_TILT = bool("mz.tilt", "Inclinación al tocar", C_HOME, MZG, true, "El mosaico se hunde hacia donde lo tocas")
+    val MZ_TURN = bool("mz.turn", "Animación de torniquete", C_HOME, MZG, true, "Al abrir una app los mosaicos giran sobre el borde izquierdo")
+    val MZ_CLOCK = bool("mz.clock", "Reloj del inicio encima", C_HOME, MZG, false, "Windows Phone no lo tiene; actívalo si lo quieres")
     private const val DG = "Puntos de página"
     val D_SHOW = bool("dots.show", "Mostrar indicador de páginas", C_HOME, DG, true)
     val D_STYLE = choice("dots.style", "Estilo", C_HOME, DG, arrayOf("Puntos", "Líneas", "Cápsula activa", "Números", "Píldora One UI"), 4)
