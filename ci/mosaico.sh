@@ -46,7 +46,9 @@ REC_S=6 FPS=5 mrec zv2_remolino g_remolino
 sleep 11; shot z02_calma 1
 # imán simulado: el campo normal y luego uno fuerte hacia la derecha
 timeout 10 adb emu sensor set magnetic-field 22:5:-40 > /dev/null 2>&1; sleep 3
-timeout 10 adb emu sensor set magnetic-field 420:10:-40 > /dev/null 2>&1; sleep 3; shot z03_iman 1
+g_iman() { timeout 10 adb emu sensor set magnetic-field 420:10:-40 > /dev/null 2>&1; }
+REC_S=4 FPS=8 mrec zv3_iman g_iman
+shot z03_iman 1
 timeout 10 adb emu sensor set magnetic-field 22:5:-40 > /dev/null 2>&1; sleep 4; shot z04_pegadas 1
 echo "-- cierres de Nioro (Zen)"
 adb logcat -d -s AndroidRuntime:E | grep -A30 "FATAL EXCEPTION" | head -60
