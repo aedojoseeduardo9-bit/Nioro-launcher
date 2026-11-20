@@ -39,10 +39,10 @@ object ScreenModes {
     val DESC = arrayOf(
         "Páginas de iconos y dock. Desliza hacia arriba para ver todas las apps.",
         "Sin menú de apps: todas tus apps viven en las páginas del inicio, como en el iPhone. Deslizar hacia arriba no abre nada. Si vuelves a otro modo, tu inicio queda como estaba.",
-        "Calcado de Windows Phone: mosaicos de colores lisos en cuatro tamaños, mosaicos vivos que giran, inclinación al tocar y torniquete al abrir. Mantén pulsado un mosaico para moverlo o cambiar su tamaño. Sin menú de apps.",
+        "Calcado de Windows Phone: mosaicos de colores lisos en cuatro tamaños, mosaicos vivos, inclinación al tocar y torniquete. Desliza a la izquierda para la lista de apps con lupa y letras. Mantén pulsado un mosaico para moverlo, cambiar su tamaño o desanclarlo.",
         "Una app por tarjeta grande: pásalas a los lados con el dedo y toca la del centro para abrirla. Sin menú de apps: el inicio ya lo es.",
         "Solo el reloj y todas tus apps en una lista de texto grande que se desplaza. Sin iconos, sin dock y sin menú de apps.",
-        "Pantalla limpia: solo el reloj y el dock. Desliza hacia arriba para ver tus apps.",
+        "Tus apps flotan en el viento como hojas. Desliza para soplar, mantén el dedo para un remolino, inclina o agita el móvil, y acerca un imán: las apps se pegan a ese borde. Desde el borde de abajo, todas las apps.",
         "Una columna con todas tus apps en el borde derecho, a mano del pulgar, con su nombre al lado. Sin menú de apps: el inicio ya lo es."
     )
 
@@ -52,20 +52,23 @@ object ScreenModes {
     /** sin dock: Minimalista nunca lo tiene; Mosaico, Tarjetas y Barra lateral, si se desactiva */
     fun dockOff(m: Int = mode()): Boolean = when (m) {
         MINIMAL -> true
+        ZEN -> !S.b(S.H_DOCK_ZEN)
         MOSAIC -> !S.b(S.H_DOCK_MOSAIC)
         CARDS -> !S.b(S.H_DOCK_CARDS)
         SIDEBAR -> !S.b(S.H_DOCK_SIDE)
         else -> false
     }
     /** ¿se puede quitar el dock en este modo? */
-    fun dockOptional(m: Int): Boolean = m == MOSAIC || m == CARDS || m == SIDEBAR
+    fun dockOptional(m: Int): Boolean = m == MOSAIC || m == CARDS || m == SIDEBAR || m == ZEN
     /** el Mosaico, como Windows Phone, no lleva el reloj grande del inicio (salvo que se pida) */
     fun clockOff(m: Int = mode()): Boolean = m == MOSAIC && !S.b(S.MZ_CLOCK)
 
     /** sin menú de apps: "Sin cajón" y los modos cuyo inicio ya muestra todas las apps */
-    fun drawerOff(m: Int = mode()): Boolean = m == NO_DRAWER || embedded(m)
+    fun drawerOff(m: Int = mode()): Boolean = m == NO_DRAWER || (embedded(m) && m != ZEN)
+    /** el Zen ocupa toda la pantalla (las apps flotan también sobre el reloj) */
+    fun fullArea(m: Int = mode()): Boolean = m == ZEN
     /** el centro del inicio lo ocupa una vista de apps (ScreenHost) */
-    fun embedded(m: Int): Boolean = m == MOSAIC || m == CARDS || m == MINIMAL || m == SIDEBAR
+    fun embedded(m: Int): Boolean = m == MOSAIC || m == CARDS || m == MINIMAL || m == SIDEBAR || m == ZEN
 }
 
 /**
@@ -104,6 +107,7 @@ class ScreenHost(ctx: Context) : FrameLayout(ctx) {
                     ScreenModes.MOSAIC -> MetroView(context)
                     ScreenModes.CARDS -> CardsView(context)
                     ScreenModes.SIDEBAR -> SideBarView(context)
+                    ScreenModes.ZEN -> WindView(context)
                     else -> MinimalListView(context)
                 }
                 v.embedded = true
@@ -131,8 +135,14 @@ class ScreenHost(ctx: Context) : FrameLayout(ctx) {
         view?.setData(AppRepo.sorted(AppRepo.visible()), AppRepo.sorted(AppRepo.apps))
     }
 
-    /** atrás o inicio: el Mosaico sale primero de su modo edición; true si lo hizo */
-    fun back(): Boolean = (view as? MetroView)?.exitEdit() == true
+    /** botón atrás: el Mosaico cierra primero lo que tenga abierto (menú, letras, búsqueda, lista...) */
+    fun back(): Boolean = (view as? MetroView)?.back() == true
+    /** botón de inicio: el Mosaico vuelve a sus mosaicos; true si había algo que cerrar */
+    fun home(): Boolean = (view as? MetroView)?.home() == true
+    /** el launcher deja de verse */
+    fun stopped() {
+        (view as? MetroView)?.closeOverlays()
+    }
 
     /** zona libre entre el reloj y el dock (coordenadas de la pantalla) */
     fun setArea(top: Float, bottom: Float) {
@@ -334,8 +344,28 @@ class ScreenModeThumb(ctx: Context, val idx: Int) : View(ctx) {
                 }
             }
             ScreenModes.ZEN -> {
+                // hojas (apps) flotando inclinadas, estelas de viento y dos pegadas al borde por un imán
+                p.style = Paint.Style.STROKE
+                p.strokeWidth = u * 0.12f
                 p.color = 0x66FFFFFF
-                c.drawRoundRect(r.centerX() - u * 2f, clockY + u * 1.1f, r.centerX() + u * 2f, clockY + u * 1.5f, u * 0.2f, u * 0.2f, p)
+                for (k in 0 until 3) {
+                    val yy = top + (bottom - top) * (0.2f + k * 0.3f)
+                    c.drawArc(r.left + u * (1f + k), yy - u, r.left + u * (6f + k), yy + u, 200f, 120f, false, p)
+                }
+                p.style = Paint.Style.FILL
+                val spots = floatArrayOf(0.25f, 0.30f, 0.62f, 0.22f, 0.45f, 0.52f, 0.20f, 0.70f, 0.70f, 0.62f, 0.40f, 0.85f)
+                var k = 0
+                while (k + 1 < spots.size) {
+                    val x = r.left + pw * spots[k]
+                    val y = top + (bottom - top) * spots[k + 1]
+                    c.save()
+                    c.rotate(((k * 37) % 50 - 25).toFloat(), x, y)
+                    tile(c, x, y, u * 1.3f, k / 2)
+                    c.restore()
+                    k += 2
+                }
+                tile(c, r.right - u * 1.1f, (top + bottom) / 2f - u * 0.8f, u * 1.2f, 4)
+                tile(c, r.right - u * 1.1f, (top + bottom) / 2f + u * 0.8f, u * 1.2f, 5)
             }
             ScreenModes.SIDEBAR -> {
                 val ic = u * 1.3f

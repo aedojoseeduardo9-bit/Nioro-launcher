@@ -21,6 +21,13 @@ back() { timeout 20 adb shell input keyevent 4; sleep 2; }
 swipe_up() { timeout 20 adb shell input swipe 540 1750 540 700 260; }
 hold() { timeout 20 adb shell input swipe "$1" "$2" "$1" "$2" 1300; }
 
+# SOLO=mosaico (lanzado a mano): solo las capturas del modo Mosaico, mucho más rápido
+if [ "${SOLO:-}" = "mosaico" ]; then
+  { source ci/mosaico.sh; echo "== errores graves"; adb logcat -d -b crash | tail -n 80; } > shots/report.txt 2>&1
+  cat shots/report.txt
+  exit 0
+fi
+
 {
   # 1) inicio con iconos y dock
   prefs 0; start; shot 01_inicio
@@ -105,6 +112,8 @@ hold() { timeout 20 adb shell input swipe "$1" "$2" "$1" "$2" 1300; }
   prefs 7; start; swipe_up; shot 42_rueda 3
   g_rueda() { timeout 20 adb shell input swipe 950 1720 150 1720 260; }
   REC_S=4 rec v17_rueda g_rueda; back
+  # modo Mosaico (estilo Windows Phone)
+  source ci/mosaico.sh
   # Ajustes: portada y galería de diseños del dock
   prefs 0; timeout 60 adb shell am start -W -n $P/.SettingsActivity > /dev/null 2>&1; sleep 5; shot 30_ajustes 1
   timeout 20 adb shell input swipe 540 1800 540 600 400; sleep 2; shot 31_ajustes_abajo 1

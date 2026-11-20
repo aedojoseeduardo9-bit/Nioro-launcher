@@ -259,7 +259,7 @@ class MainActivity : Activity() {
         overlay.hide()
         home.exitEdit(true)
         home.exitClockEdit(true)
-        screen.back()
+        screen.stopped()
         fx.clear()
         // nada de animaciones ni sensores mientras el launcher no se ve
         if (drawer.isOpen) drawer.closeNow()
@@ -277,7 +277,7 @@ class MainActivity : Activity() {
                 home.isEditing -> home.exitEdit()
                 recents.isOpen -> recents.close()
                 drawer.isOpen -> drawer.close()
-                screen.back() -> {}
+                screen.home() -> {}
                 else -> runGesture(S.G_HOME)
             }
         }

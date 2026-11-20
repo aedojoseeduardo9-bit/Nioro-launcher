@@ -89,6 +89,8 @@ object Prefs {
     var blur by BoolPref("blur", true)
     var tilt by BoolPref("tilt", false)
     var seeded by BoolPref("seeded", false)
+    /** Mosaico con lista de apps: en el inicio solo las apps ancladas (versión 2 del Mosaico) */
+    var metroV2 by BoolPref("metroV2", false)
     /** buscar actualizaciones solo al volver al inicio */
     var autoUpdate by BoolPref("autoUpdate", true)
     var lastUpdateCheck: Long
@@ -137,6 +139,19 @@ object Prefs {
         return out
     }
     fun setMetroSizes(m: Map<String, Int>) = putList("metroSizes", m.map { it.key + "=" + it.value })
+    /** Zen: apps pegadas a un borde por un imán (clave -> borde y sitio) */
+    fun windStuck(): LinkedHashMap<String, Pair<Int, Int>> {
+        val out = LinkedHashMap<String, Pair<Int, Int>>()
+        for (line in getList("windStuck")) {
+            val p = line.split('|')
+            if (p.size < 3) continue
+            val e = p[p.size - 2].toIntOrNull() ?: continue
+            val sl = p[p.size - 1].toIntOrNull() ?: continue
+            out[p.subList(0, p.size - 2).joinToString("|")] = Pair(e, sl)
+        }
+        return out
+    }
+    fun setWindStuck(m: Map<String, Pair<Int, Int>>) = putList("windStuck", m.map { it.key + "|" + it.value.first + "|" + it.value.second })
     fun hidden(): MutableList<String> = getList("hidden")
     fun setHidden(v: List<String>) = putList("hidden", v)
     fun knownKeys(): MutableList<String> = getList("knownKeys")

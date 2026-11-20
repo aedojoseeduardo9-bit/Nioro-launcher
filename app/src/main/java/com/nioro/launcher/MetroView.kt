@@ -3,6 +3,7 @@ package com.nioro.launcher
 import android.app.Activity
 import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -15,14 +16,26 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.AdaptiveIconDrawable
 import android.graphics.drawable.Drawable
+import android.net.Uri
 import android.os.Build
 import android.os.SystemClock
+import android.provider.Settings
+import android.text.Editable
+import android.text.InputType
+import android.text.SpannableStringBuilder
 import android.text.TextPaint
 import android.text.TextUtils
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.VelocityTracker
 import android.view.View
+import android.view.WindowInsets
 import android.view.WindowInsetsController
+import android.view.inputmethod.BaseInputConnection
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
+import android.view.inputmethod.InputMethodManager
+import java.text.Normalizer
 import java.util.Calendar
 import java.util.Locale
 import java.util.Random
@@ -85,9 +98,15 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
         private val UW = intArrayOf(1, 2, 4, 4)
         private val UH = intArrayOf(1, 2, 2, 4)
 
+        /** grupos de la lista: «#», a-z y el globo (otros alfabetos) */
+        const val GROUPS = 28
+        private val GROUP_LABELS = arrayOf("#", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
+            "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "")
+        private val MARKS = Regex("\\p{Mn}+")
+
         private const val FLIP_MS = 820f
-        private const val TURN_MS = 240f
-        private const val TURN_SPREAD = 190f
+        private const val TURN_MS = 300f
+        private const val TURN_SPREAD = 240f
     }
 
     // ---------------------------------------------------------------- Datos
@@ -199,7 +218,7 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
     private var turnSel = -1
     private var turnFired = false
     private val turnRect = RectF()
-    private val turnReset = Runnable { if (turnOut) { turnOut = false; invalidate() } }
+    private val turnReset = Runnable { if (turnOut) { turnOut = false; turnFromList = false; invalidate() } }
 
     private val longRun = Runnable {
         val i = downIdx
@@ -227,9 +246,11 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
     private fun bgColor(): Int = if (bgMode() == 1) Color.WHITE else Color.BLACK
     override val fadeColor: Int get() = if (windows()) Color.BLACK else when (bgMode()) { 0 -> Color.BLACK; 1 -> Color.WHITE; else -> 0 }
 
-    private fun accentOf(e: AppEntry): Int {
+    private fun accentOf(e: AppEntry?): Int {
         val a = S.i(S.MZ_ACCENT)
         if (a >= ACCENTS.size) {
+            // letras y botones: el cian de siempre
+            if (e == null) return ACCENTS[4]
             // color de cada app, un poco más oscuro y plano (los mosaicos no tienen degradado)
             return blend(e.tint or 0xFF000000.toInt(), Color.BLACK, 0.18f)
         }
@@ -248,6 +269,12 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
         val byKey = HashMap<String, AppEntry>()
         for (e in shown) byKey[e.key] = e
         val order = Prefs.metroOrder()
+        // versión 2: en el inicio solo las apps ancladas (las demás están en la lista). Si el Mosaico de la
+        // versión anterior tenía todas las apps, se vuelve a empezar con las favoritas.
+        if (!Prefs.metroV2) {
+            Prefs.metroV2 = true
+            if (order.size >= max(12, (shown.size * 0.85f).toInt())) order.clear()
+        }
         val first = order.isEmpty()
         sizes = Prefs.metroSizes()
         items.clear()
@@ -267,12 +294,17 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
                 favs++
             }
         }
-        var changed = first || items.size != order.size
-        for (e in shown) {
-            if (!seen.add(e.key)) continue
-            items.add(e)
-            changed = true
+        if (first) {
+            // el Reloj y el Calendario se anclan también: son los mosaicos vivos
+            for (e in shown) {
+                val p = e.pkg.lowercase(Locale.ROOT)
+                if ((p.contains("calendar") || p.contains("clock")) && seen.add(e.key)) items.add(e)
+            }
+            // sin favoritas, las primeras apps por orden alfabético
+            if (items.isEmpty()) for (e in shown.take(8)) if (seen.add(e.key)) items.add(e)
         }
+        val changed0 = first || items.size != order.size
+        var changed = changed0
         live = IntArray(items.size)
         for ((i, e) in items.withIndex()) {
             val p = e.pkg.lowercase(Locale.ROOT)
@@ -284,12 +316,13 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
             if (!sizes.containsKey(e.key)) {
                 // apps sin tamaño: pequeñas en la primera colocación (rellenan bloques de 2×2), medianas si
                 // se instalan después; el Reloj y el Calendario, medianos para que se vean vivos
-                sizes[e.key] = if (live[i] != 0 || !first) MEDIUM else SMALL
+                sizes[e.key] = MEDIUM
                 changed = true
             }
         }
         if (changed) save()
         clearNames()
+        buildList()
     }
 
     private fun clearNames() {
@@ -319,8 +352,9 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
         val viewH = h - insetBottom - insetTop
         scroll.dim = viewH
         scroll.min = 0f
-        scroll.max = max(0f, top0 + contentH + gap * 3f - (h - insetBottom))
+        scroll.max = max(0f, endY() - (h - insetBottom))
         if (scroll.value > scroll.max) scroll.jump(scroll.max)
+        relayoutList()
         for (i in items.indices) target(i, !laidOut)
         laidOut = items.isNotEmpty()
         clearNames()
@@ -421,15 +455,13 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
         val light = bgMode() == 1 && isAttachedToWindow
         try {
             if (Build.VERSION.SDK_INT >= 30) {
-                act.window.insetsController?.setSystemBarsAppearance(
-                    if (light) WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS else 0,
-                    WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
-                )
+                val both = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+                act.window.insetsController?.setSystemBarsAppearance(if (light) both else 0, both)
             } else {
                 val dv = act.window.decorView
                 @Suppress("DEPRECATION")
-                dv.systemUiVisibility = if (light) dv.systemUiVisibility or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
-                else dv.systemUiVisibility and View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv()
+                val f = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+                dv.systemUiVisibility = if (light) dv.systemUiVisibility or f else dv.systemUiVisibility and f.inv()
             }
         } catch (t: Throwable) {
         }
@@ -448,7 +480,9 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
         val act = context as? Activity
         if (act != null && bgMode() == 1) {
             try {
-                if (Build.VERSION.SDK_INT >= 30) act.window.insetsController?.setSystemBarsAppearance(0, WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS)
+                if (Build.VERSION.SDK_INT >= 30) act.window.insetsController?.setSystemBarsAppearance(
+                    0, WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+                )
             } catch (t: Throwable) {
             }
         }
@@ -468,7 +502,7 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
             uiHandler.removeCallbacks(minuteRun)
             uiHandler.removeCallbacks(kickRun)
             for (f in flips) f.phase = -1
-            if (editing) exitEdit()
+            closeOverlays()
         }
     }
 
@@ -627,8 +661,9 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
         tileP.alpha = 255
         val w = width.toFloat()
         // fuera de la zona de los mosaicos (barra de estado y, sin dock, la parte de abajo)
-        c.drawRect(0f, 0f, w, insetTop, tileP)
-        if (ScreenModes.dockOff()) c.drawRect(0f, height - insetBottom, w, height.toFloat(), tileP)
+        // se solapan 2 px con la zona de los mosaicos: sin rendija entre los dos rellenos
+        c.drawRect(0f, 0f, w, insetTop + 2f, tileP)
+        if (ScreenModes.dockOff()) c.drawRect(0f, height - insetBottom - 2f, w, height.toFloat(), tileP)
     }
 
     override fun onFrame(dt: Float): Boolean {
@@ -640,12 +675,15 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
             if (!turnFired && e >= TURN_SPREAD + TURN_MS + 70f) {
                 turnFired = true
                 val i = turnSel
-                if (i in items.indices) listener?.onLaunch(items[i], RectF(turnRect))
+                val fromList = turnLaunch
+                if (turnFromList && fromList != null) listener?.onLaunch(fromList, RectF(turnRect))
+                else if (i in items.indices) listener?.onLaunch(items[i], RectF(turnRect))
                 uiHandler.removeCallbacks(turnReset)
                 uiHandler.postDelayed(turnReset, 2500L)
             }
             if (turnFired) more = false
         }
+        if (jumpOpen && now - jumpT0 < 700L) more = true
         if (draggingTile) {
             // cerca del borde de arriba o de abajo, la lista se desplaza sola
             val edge = dp(72f)
@@ -683,6 +721,27 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
         } else if (mode != 2) {
             c.drawColor(bgColor())
         }
+        // dos pantallas, como en Windows Phone: los mosaicos y, a la derecha, la lista de apps
+        val pg = pageSp.value
+        val w = width.toFloat()
+        if (pg < 0.999f) {
+            c.save()
+            c.translate(-pg * w, 0f)
+            drawStart(c, now, top, bottom)
+            c.restore()
+        }
+        if (pg > 0.001f) {
+            c.save()
+            c.translate((1f - pg) * w, 0f)
+            drawList(c, now, top, bottom)
+            drawMenu(c, top, bottom)
+            c.restore()
+        }
+        if (jumpSp.value > 0.001f) drawJump(c, now, top, bottom)
+        if (layer >= 0) c.restoreToCount(layer)
+    }
+
+    private fun drawStart(c: Canvas, now: Long, top: Float, bottom: Float) {
         val raw = scroll.value
         val off = raw.coerceIn(scroll.min, scroll.max)
         val over = raw - off
@@ -716,6 +775,22 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
             }
             drawTile(c, i, x, y, w, h, a, now, top, bottom)
         }
+        // la flecha del final: lleva a la lista de todas las apps
+        val d = arrowD()
+        val ax = width - side - d / 2f
+        val ay = top0 + contentH + gap * 2f + d / 2f - off
+        arrowRect.set(ax - d * 0.75f, ay - d * 0.75f, ax + d * 0.75f, ay + d * 0.75f)
+        if (ay - d < bottom && !(turnOut && !turnFromList)) {
+            val al = (255f * (1f - 0.6f * ek) * clamp01(progress * 1.6f)).toInt().coerceIn(0, 255)
+            ringP.color = fg()
+            ringP.alpha = al
+            ringP.strokeWidth = 2.6f * (width / 480f)
+            c.drawCircle(ax, ay, d / 2f, ringP)
+            val q = d * 0.2f
+            c.drawLine(ax - q, ay, ax + q, ay, ringP)
+            c.drawLine(ax + q * 0.1f, ay - q * 0.9f, ax + q, ay, ringP)
+            c.drawLine(ax + q * 0.1f, ay + q * 0.9f, ax + q, ay, ringP)
+        }
         if (draggingTile && sel in items.indices) {
             val k = items[sel].key
             val w = sizW.get(k, tw(sel)).value * 1.05f
@@ -723,7 +798,6 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
             drawTile(c, sel, dragX - (w - w / 1.05f) / 2f, dragY - (h - h / 1.05f) / 2f, w, h, 0.92f, now, top, bottom)
         }
         if (editing && !draggingTile && sel in items.indices) drawBadges(c, off, ek)
-        if (layer >= 0) c.restoreToCount(layer)
     }
 
     /** dibuja un mosaico con sus efectos 3D (giro vivo, inclinación y torniquete) */
@@ -732,7 +806,7 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
         var alpha = alpha0
         // torniquete: al abrir, fila a fila, el tocado el último; al entrar, al revés
         var turn = 0f
-        if (turnOut) {
+        if (turnOut && !turnFromList) {
             val dly = if (i == turnSel) TURN_SPREAD + 60f else turnDelay(x, y, w, h, top, bottom, i)
             val t = clamp01(((now - turnT0).toFloat() - dly) / TURN_MS)
             turn = 90f * t * t
@@ -944,7 +1018,7 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
         val dark = bgMode() == 1
         val fill = if (dark) Color.BLACK else Color.WHITE
         val ink = if (dark) Color.WHITE else Color.BLACK
-        // opciones
+        // desanclar (la chincheta de Windows Phone)
         val ox = l + w
         val oy = t
         badgeOpt.set(ox - rad - dp(8f), oy - rad - dp(8f), ox + rad + dp(8f), oy + rad + dp(8f))
@@ -954,8 +1028,20 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
         badgeLine.strokeWidth = dp(1.6f)
         badgeLine.style = Paint.Style.STROKE
         c.drawCircle(ox, oy, rad, badgeLine)
-        badgeP.color = ink
-        for (d in -1..1) c.drawCircle(ox + d * rad * 0.42f, oy, rad * 0.12f, badgeP)
+        badgeLine.strokeWidth = dp(1.8f)
+        val pr = rad * 0.5f
+        // cabeza de la chincheta, cuerpo y aguja, en diagonal
+        arrow.reset()
+        arrow.moveTo(ox + pr * 0.15f, oy - pr * 0.95f)
+        arrow.lineTo(ox + pr * 0.95f, oy - pr * 0.15f)
+        arrow.moveTo(ox + pr * 0.55f, oy - pr * 0.55f)
+        arrow.lineTo(ox - pr * 0.05f, oy + pr * 0.05f)
+        arrow.moveTo(ox - pr * 0.45f, oy - pr * 0.25f)
+        arrow.lineTo(ox + pr * 0.25f, oy + pr * 0.45f)
+        arrow.moveTo(ox - pr * 0.1f, oy + pr * 0.1f)
+        arrow.lineTo(ox - pr * 0.9f, oy + pr * 0.9f)
+        c.drawPath(arrow, badgeLine)
+        badgeLine.strokeWidth = dp(1.6f)
         // tamaño: la flecha apunta hacia donde crecerá o se encogerá el mosaico
         val sx = l + w
         val sy = t + h
@@ -1047,9 +1133,14 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
 
     private fun refreshBounds() {
         val h = height.toFloat()
-        scroll.max = max(0f, top0 + contentH + gap * 3f - (h - insetBottom))
+        scroll.max = max(0f, endY() - (h - insetBottom))
         scroll.clampNow()
     }
+
+    /** final del contenido de los mosaicos: tras ellos va el botón de la flecha (a la lista de apps) */
+    private fun endY(): Float = top0 + contentH + gap * 2f + arrowD() + gap * 3f
+
+    private fun arrowD(): Float = 48f * (width / 480f)
 
     private fun startDrag(x: Float, y: Float) {
         val r = itemRect(sel)
@@ -1120,6 +1211,7 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
         }
         turnRect.set(r)
         turnOut = true
+        turnFromList = false
         turnFired = false
         turnSel = i
         turnT0 = SystemClock.uptimeMillis()
@@ -1131,6 +1223,8 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
         // al volver al inicio: los mosaicos entran girando (lo anima ScreenHost con progress)
         uiHandler.removeCallbacks(turnReset)
         turnOut = false
+        turnFromList = false
+        turnLaunch = null
         exitEdit()
         super.onOpen()
     }
@@ -1139,6 +1233,7 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
     private fun startTilt(i: Int, x: Float, y: Float) {
         if (!S.b(S.MZ_TILT)) return
         val r = itemRect(i)
+        ltilt = -1
         tilting = i
         tiltX = ((x - r.centerX()) / max(1f, r.width() / 2f)).coerceIn(-1f, 1f)
         tiltY = ((y - r.centerY()) / max(1f, r.height() / 2f)).coerceIn(-1f, 1f)
@@ -1149,21 +1244,854 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
     }
 
     private fun releaseTilt() {
-        if (tilting < 0) return
+        if (tilting < 0 && ltilt < 0) return
         tiltSp.tune(420f, 0.8f)
         tiltSp.to(0f)
         ticker.kick()
     }
 
+
+    // ================================================================ Lista de apps (deslizar a la izquierda)
+    /** fila de la lista: 0 lupa, 1 letra, 2 app, 3 título «nuevas», 4 cuadro de búsqueda, 5 sin resultados */
+    private class LRow(val kind: Int, val group: Int, val e: AppEntry?) {
+        var y = 0f
+        var h = 0f
+    }
+    private val lrows = ArrayList<LRow>()
+    private val alphaApps = ArrayList<AppEntry>()
+    private val groupRow = IntArray(GROUPS) { -1 }
+    private val lscroll = Scroll1D(ticker)
+    private val pageSp = ticker.add(SpringValue(0f, 300f, 31f, 0.0005f))
+    /** un píxel de Windows Phone (su pantalla medía 480 de ancho): todo se escala con el ancho */
+    private var wpU = 1f
+    private var lIcon = 0f
+    private var lMargin = 0f
+    private var lTop = 0f
+    private var lContent = 0f
+    private var imeH = 0f
+    private val rowP = TextPaint(Paint.ANTI_ALIAS_FLAG)
+    private val headP = TextPaint(Paint.ANTI_ALIAS_FLAG)
+    private val ringP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val rowNames = HashMap<String, String>()
+    private var lDown = -1
+    private var ltilt = -1
+    private var turnFromList = false
+    private var turnRow = -1
+    private val arrowRect = RectF()
+
+    // búsqueda (la lupa)
+    var searching = false
+        private set
+    private val qbuf = SpannableStringBuilder()
+    private var queryNorm = ""
+    private var caretOn = true
+    private val caretRun = object : Runnable {
+        override fun run() {
+            caretOn = !caretOn
+            invalidate()
+            if (searching) uiHandler.postDelayed(this, 530L)
+        }
+    }
+
+    // saltos por letra
+    private var jumpOpen = false
+    private val jumpSp = ticker.add(SpringValue(0f, 320f, 30f, 0.002f))
+    private var jumpT0 = 0L
+    private var jumpDown = -1
+    private val jumpCell = RectF()
+    private var jumpTile = 0f
+    private var jumpGap = 0f
+    private var jumpX0 = 0f
+    private var jumpY0 = 0f
+
+    // menú al mantener pulsada una app de la lista
+    private var menuOpen = false
+    private var menuRow = -1
+    private val menuSp = ticker.add(SpringValue(0f, 420f, 34f, 0.002f))
+    private val menuActs = IntArray(3)
+    private var menuN = 0
+    private val menuRect = RectF()
+    private var menuItemH = 0f
+    private var menuDown = -1
+    private val longList = Runnable {
+        val r = lDown
+        if (r in lrows.indices && lrows[r].kind == 2 && !moved) {
+            longDone = true
+            releaseTilt()
+            openMenu(r)
+        }
+    }
+
+    private fun fg(): Int = if (bgMode() == 1) Color.BLACK else Color.WHITE
+
+    /** grupo de la letra inicial: 0 «#», 1..26 a-z, 27 otros alfabetos (el globo) */
+    private fun groupOf(label: String): Int {
+        val ch = label.trim().firstOrNull() ?: return 0
+        val n = Normalizer.normalize(ch.toString(), Normalizer.Form.NFD).firstOrNull()?.lowercaseChar() ?: ch
+        if (n in 'a'..'z') return 1 + (n - 'a')
+        if (n.isLetter()) return 27
+        return 0
+    }
+
+    private fun norm(x: String): String =
+        Normalizer.normalize(x.lowercase(Locale.getDefault()), Normalizer.Form.NFD).replace(MARKS, "")
+
+    private fun buildList() {
+        alphaApps.clear()
+        alphaApps.addAll(shown)
+        val col = java.text.Collator.getInstance(Locale.getDefault())
+        col.strength = java.text.Collator.PRIMARY
+        alphaApps.sortWith { a, b -> col.compare(a.label, b.label) }
+        lrows.clear()
+        for (g in 0 until GROUPS) groupRow[g] = -1
+        if (searching) {
+            lrows.add(LRow(4, 0, null))
+            var n = 0
+            if (queryNorm.isNotEmpty()) for (e in alphaApps) {
+                if (norm(e.label).contains(queryNorm)) {
+                    lrows.add(LRow(2, groupOf(e.label), e))
+                    n++
+                }
+            }
+            if (queryNorm.isNotEmpty() && n == 0) lrows.add(LRow(5, 0, null))
+        } else {
+            lrows.add(LRow(0, 0, null))
+            // «nuevas»: lo instalado en los últimos 3 días, arriba del todo
+            val now = System.currentTimeMillis()
+            val fresh = alphaApps.filter { it.installed > 0L && now - it.installed in 0L..(3L * 24 * 3600 * 1000) }
+                .sortedByDescending { it.installed }.take(6)
+            if (fresh.isNotEmpty()) {
+                lrows.add(LRow(3, 0, null))
+                for (e in fresh) lrows.add(LRow(2, -1, e))
+            }
+            var g = -1
+            for (e in alphaApps) {
+                val gg = groupOf(e.label)
+                if (gg != g) {
+                    g = gg
+                    groupRow[g] = lrows.size
+                    lrows.add(LRow(1, g, null))
+                }
+                lrows.add(LRow(2, g, e))
+            }
+        }
+        layoutRows()
+        rowNames.clear()
+    }
+
+    private fun relayoutList() {
+        wpU = width / 480f
+        lIcon = 62f * wpU
+        lMargin = 24f * wpU
+        lTop = insetTop + 12f * wpU
+        rowP.textSize = 25.33f * wpU
+        rowP.typeface = Typeface.create(Typeface.DEFAULT, 400, false)
+        headP.textSize = 34f * wpU
+        headP.typeface = Typeface.create(Typeface.DEFAULT, 300, false)
+        layoutRows()
+        rowNames.clear()
+    }
+
+    private fun layoutRows() {
+        var y = 0f
+        for (r in lrows) {
+            r.h = when (r.kind) {
+                0 -> 72f * wpU
+                3 -> 60f * wpU
+                4 -> 84f * wpU
+                else -> 74f * wpU
+            }
+            r.y = y
+            y += r.h
+        }
+        lContent = y + 90f * wpU
+        val bottom = height - max(insetBottom, imeH)
+        lscroll.dim = max(1f, bottom - insetTop)
+        lscroll.min = 0f
+        lscroll.max = max(0f, lTop + lContent - bottom)
+        if (lscroll.value > lscroll.max) lscroll.jump(lscroll.max)
+    }
+
+    private fun rowTop(i: Int): Float = lTop + lrows[i].y - lscroll.value.coerceIn(lscroll.min, lscroll.max)
+
+    private fun listHit(x: Float, y: Float): Int {
+        for (i in lrows.indices) {
+            val t = rowTop(i)
+            val r = lrows[i]
+            if (y < t || y > t + r.h) continue
+            return when (r.kind) {
+                0 -> if (x <= lMargin + 60f * wpU) i else -1
+                1 -> if (x <= lMargin + lIcon + 10f * wpU) i else -1
+                2, 4 -> i
+                else -> -1
+            }
+        }
+        return -1
+    }
+
+    private fun iconRectOf(i: Int): RectF {
+        val t = rowTop(i) + (lrows[i].h - lIcon) / 2f
+        return RectF(lMargin, t, lMargin + lIcon, t + lIcon)
+    }
+
+    private fun drawList(c: Canvas, now: Long, top: Float, bottom: Float) {
+        val fgc = fg()
+        val dim = menuSp.value
+        for (i in lrows.indices) {
+            val r = lrows[i]
+            val t = rowTop(i)
+            if (t + r.h < top || t > bottom) continue
+            var a = 1f
+            var turn = 0f
+            if (turnOut && turnFromList) {
+                val dly = if (i == turnRow) TURN_SPREAD + 60f else clamp01((t - top) / max(1f, bottom - top)) * TURN_SPREAD
+                val q = clamp01(((now - turnT0).toFloat() - dly) / TURN_MS)
+                turn = 90f * q * q
+                a = 1f - clamp01((q - 0.55f) / 0.45f)
+                if (a <= 0.01f) continue
+            }
+            val tk = if (ltilt == i) tiltSp.value else 0f
+            val l = lMargin
+            val rr = width - lMargin
+            val b = t + r.h
+            c.save()
+            if (tk > 0.001f || turn != 0f) {
+                if (!place(l, t, rr, b, 0f, tk, turn)) {
+                    c.restore()
+                    continue
+                }
+                c.concat(m)
+            }
+            // con el menú abierto, todo menos la fila elegida se apaga
+            val al = (255f * a * (if (dim > 0.001f && i != menuRow) 1f - 0.55f * dim else 1f)).toInt().coerceIn(0, 255)
+            drawRow(c, i, r, t, al, fgc, now)
+            c.restore()
+        }
+    }
+
+    private fun drawRow(c: Canvas, i: Int, r: LRow, t: Float, al: Int, fgc: Int, now: Long) {
+        val cy = t + r.h / 2f
+        when (r.kind) {
+            0 -> {
+                // la lupa: un círculo con la lupa dentro, arriba a la izquierda
+                val rad = 24f * wpU
+                val cx = lMargin + rad
+                ringP.color = fgc
+                ringP.alpha = al
+                ringP.strokeWidth = 2.6f * wpU
+                c.drawCircle(cx, cy, rad, ringP)
+                drawMagnifier(c, cx, cy, rad * 0.62f, al, fgc)
+            }
+            1 -> {
+                // la letra: un cuadrado con el borde del color de acento y la letra abajo a la izquierda
+                val top = cy - lIcon / 2f
+                ringP.color = accentOf(null)
+                ringP.alpha = al
+                ringP.strokeWidth = 2.6f * wpU
+                val h = ringP.strokeWidth / 2f
+                c.drawRect(lMargin + h, top + h, lMargin + lIcon - h, top + lIcon - h, ringP)
+                if (r.group == 27) drawGlobe(c, lMargin + lIcon / 2f, top + lIcon / 2f, lIcon * 0.3f, al, fgc)
+                else {
+                    headP.color = fgc
+                    headP.alpha = al
+                    c.drawText(GROUP_LABELS[r.group], lMargin + 7f * wpU, top + lIcon - 9f * wpU, headP)
+                }
+            }
+            2 -> {
+                val e = r.e ?: return
+                val top = cy - lIcon / 2f
+                rect.set(lMargin, top, lMargin + lIcon, top + lIcon)
+                tileP.color = accentOf(e)
+                tileP.alpha = al
+                c.drawRect(rect, tileP)
+                drawGlyph(c, e, rect.centerX(), rect.centerY(), lIcon * 0.56f, al)
+                rowP.color = fgc
+                rowP.alpha = al
+                val x0 = lMargin + lIcon + 14f * wpU
+                val n = rowNames.getOrPut(e.key) {
+                    TextUtils.ellipsize(e.label, rowP, width - x0 - lMargin, TextUtils.TruncateAt.END).toString()
+                }
+                c.drawText(n, x0, cy - (rowP.descent() + rowP.ascent()) / 2f, rowP)
+            }
+            3 -> {
+                headP.color = accentOf(null)
+                headP.alpha = al
+                c.drawText("nuevas", lMargin, t + r.h * 0.72f, headP)
+            }
+            4 -> {
+                // cuadro de búsqueda de Windows Phone: blanco con texto negro mientras se escribe
+                val l = lMargin
+                val rr = width - lMargin
+                val tt = t + 14f * wpU
+                val bb = t + r.h - 14f * wpU
+                tileP.color = if (bgMode() == 1) 0xFFEDEDED.toInt() else Color.WHITE
+                tileP.alpha = al
+                c.drawRect(l, tt, rr, bb, tileP)
+                ringP.color = accentOf(null)
+                ringP.alpha = al
+                ringP.strokeWidth = 2.6f * wpU
+                c.drawRect(l, tt, rr, bb, ringP)
+                smallP.textSize = 22f * wpU
+                val ty = (tt + bb) / 2f - (smallP.descent() + smallP.ascent()) / 2f
+                val txt = queryShown
+                if (txt.isEmpty()) {
+                    smallP.color = 0xFF8A8A8A.toInt()
+                    smallP.alpha = al
+                    c.drawText("buscar aplicaciones", l + 12f * wpU, ty, smallP)
+                } else {
+                    smallP.color = Color.BLACK
+                    smallP.alpha = al
+                    c.drawText(txt, l + 12f * wpU, ty, smallP)
+                }
+                if (caretOn) {
+                    val cx = l + 12f * wpU + (if (txt.isEmpty()) 0f else smallP.measureText(txt)) + 2f * wpU
+                    tileP.color = Color.BLACK
+                    tileP.alpha = al
+                    c.drawRect(cx, tt + 12f * wpU, cx + 2f * wpU, bb - 12f * wpU, tileP)
+                }
+                smallP.color = Color.WHITE
+            }
+            5 -> {
+                smallP.textSize = 22f * wpU
+                smallP.color = 0xFF8A8A8A.toInt()
+                smallP.alpha = al
+                c.drawText("no hay aplicaciones con «$queryShown»", lMargin, cy, smallP)
+                smallP.color = Color.WHITE
+            }
+        }
+    }
+
+    private var queryShown = ""
+
+    private fun drawMagnifier(c: Canvas, cx: Float, cy: Float, s: Float, al: Int, col: Int) {
+        ringP.color = col
+        ringP.alpha = al
+        val sw = ringP.strokeWidth
+        ringP.strokeWidth = max(2f, s * 0.2f)
+        val r = s * 0.5f
+        val ox = cx - s * 0.14f
+        val oy = cy - s * 0.14f
+        c.drawCircle(ox, oy, r, ringP)
+        val d = r * 0.707f
+        c.drawLine(ox + d, oy + d, cx + s * 0.62f, cy + s * 0.62f, ringP)
+        ringP.strokeWidth = sw
+    }
+
+    private fun drawGlobe(c: Canvas, cx: Float, cy: Float, r: Float, al: Int, col: Int) {
+        ringP.color = col
+        ringP.alpha = al
+        val sw = ringP.strokeWidth
+        ringP.strokeWidth = max(2f, r * 0.12f)
+        c.drawCircle(cx, cy, r, ringP)
+        rect.set(cx - r * 0.45f, cy - r, cx + r * 0.45f, cy + r)
+        c.drawOval(rect, ringP)
+        c.drawLine(cx - r, cy, cx + r, cy, ringP)
+        c.drawLine(cx, cy - r, cx, cy + r, ringP)
+        ringP.strokeWidth = sw
+    }
+
+    private fun toPage(p: Int, vel: Float = 0f) {
+        pageSp.tune(300f, 1f)
+        pageSp.to(p.toFloat())
+        pageSp.velocity = vel
+        if (p == 0 && searching) endSearch()
+        Hx.fire(this, S.HE_PAGE)
+        ticker.kick()
+    }
+
+    override fun fadeTopK(): Float {
+        val pg = clamp01(pageSp.value)
+        val a = clamp01((scroll.value - scroll.min) / fadeLen)
+        val b = clamp01((lscroll.value - lscroll.min) / fadeLen)
+        return a + (b - a) * pg
+    }
+
+    override fun fadeBottomK(): Float {
+        val pg = clamp01(pageSp.value)
+        val a = clamp01((scroll.max - scroll.value) / fadeLen)
+        val b = clamp01((lscroll.max - lscroll.value) / fadeLen)
+        return a + (b - a) * pg
+    }
+
+    // ---------------------------------------------------------------- Saltos por letra
+    private fun openJump() {
+        if (jumpOpen) return
+        jumpOpen = true
+        jumpT0 = SystemClock.uptimeMillis()
+        jumpSp.tune(320f, 1f)
+        jumpSp.to(1f)
+        Hx.fire(this, S.HE_PANEL)
+        ticker.kick()
+    }
+
+    private fun closeJump() {
+        if (!jumpOpen) return
+        jumpOpen = false
+        jumpSp.tune(420f, 1f)
+        jumpSp.to(0f)
+        ticker.kick()
+    }
+
+    private fun layoutJump(top: Float, bottom: Float) {
+        jumpGap = 12f * wpU
+        val m = 24f * wpU
+        jumpTile = (width - m * 2f - jumpGap * 3f) / 4f
+        val rows = (GROUPS + 3) / 4
+        val gh = rows * jumpTile + (rows - 1) * jumpGap
+        jumpX0 = m
+        jumpY0 = if (gh < bottom - top - m * 2f) top + (bottom - top - gh) / 2f else top + m
+    }
+
+    private fun jumpHit(x: Float, y: Float): Int {
+        for (g in 0 until GROUPS) {
+            val l = jumpX0 + (g % 4) * (jumpTile + jumpGap)
+            val t = jumpY0 + (g / 4) * (jumpTile + jumpGap)
+            if (x >= l && x <= l + jumpTile && y >= t && y <= t + jumpTile) return g
+        }
+        return -1
+    }
+
+    private fun drawJump(c: Canvas, now: Long, top: Float, bottom: Float) {
+        val k = jumpSp.value
+        layoutJump(top, bottom)
+        tileP.color = if (bgMode() == 1) Color.WHITE else Color.BLACK
+        tileP.alpha = (235f * clamp01(k)).toInt()
+        c.drawRect(0f, top, width.toFloat(), bottom, tileP)
+        val dark = bgMode() != 1
+        for (g in 0 until GROUPS) {
+            val l = jumpX0 + (g % 4) * (jumpTile + jumpGap)
+            val t = jumpY0 + (g / 4) * (jumpTile + jumpGap)
+            // al abrir, las casillas giran hacia ti una tras otra
+            val q = if (jumpOpen) clamp01(((now - jumpT0).toFloat() - g * 11f) / 260f) else clamp01(k)
+            val e = 1f - (1f - q) * (1f - q) * (1f - q)
+            if (e <= 0.01f) continue
+            val has = groupRow[g] >= 0
+            val ang = (1f - e) * 85f
+            c.save()
+            if (ang > 0.5f || (jumpDown == g)) {
+                if (!place(l, t, l + jumpTile, t + jumpTile, ang, if (jumpDown == g) tiltSp.value else 0f, 0f)) {
+                    c.restore()
+                    continue
+                }
+                c.concat(m)
+            }
+            val al = (255f * e * clamp01(k * 1.5f)).toInt().coerceIn(0, 255)
+            tileP.color = if (has) accentOf(null) else if (dark) 0xFF1F1F1F.toInt() else 0xFFE0E0E0.toInt()
+            tileP.alpha = al
+            c.drawRect(l, t, l + jumpTile, t + jumpTile, tileP)
+            val lc = if (has) Color.WHITE else if (dark) 0xFF555555.toInt() else 0xFFA0A0A0.toInt()
+            if (g == 27) drawGlobe(c, l + jumpTile / 2f, t + jumpTile / 2f, jumpTile * 0.26f, al, lc)
+            else {
+                headP.color = lc
+                headP.alpha = al
+                val hs = headP.textSize
+                headP.textSize = jumpTile * 0.44f
+                c.drawText(GROUP_LABELS[g], l + jumpTile * 0.09f, t + jumpTile * 0.86f, headP)
+                headP.textSize = hs
+            }
+            c.restore()
+        }
+    }
+
+    private fun jumpTouch(ev: MotionEvent): Boolean {
+        val g = jumpHit(ev.x, ev.y)
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                jumpDown = if (g >= 0 && groupRow[g] >= 0) g else -1
+                tilting = -1
+                ltilt = -1
+                if (jumpDown >= 0) {
+                    val l = jumpX0 + (g % 4) * (jumpTile + jumpGap)
+                    val t = jumpY0 + (g / 4) * (jumpTile + jumpGap)
+                    tiltX = ((ev.x - (l + jumpTile / 2f)) / (jumpTile / 2f)).coerceIn(-1f, 1f)
+                    tiltY = ((ev.y - (t + jumpTile / 2f)) / (jumpTile / 2f)).coerceIn(-1f, 1f)
+                    tiltSp.tune(1400f, 1f)
+                    tiltSp.to(1f)
+                    Hx.fire(this, S.HE_ICON)
+                }
+                ticker.kick()
+            }
+            MotionEvent.ACTION_UP -> {
+                val d = jumpDown
+                jumpDown = -1
+                tiltSp.to(0f)
+                if (d >= 0 && d == g) {
+                    // salta a esa letra: queda arriba del todo
+                    val r = groupRow[d]
+                    if (r >= 0) lscroll.jump((lrows[r].y).coerceIn(lscroll.min, lscroll.max))
+                    closeJump()
+                } else if (g < 0) closeJump()
+                ticker.kick()
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                jumpDown = -1
+                tiltSp.to(0f)
+            }
+        }
+        return true
+    }
+
+    // ---------------------------------------------------------------- Menú de una app
+    private fun isPinned(e: AppEntry): Boolean {
+        for (x in items) if (x.key == e.key) return true
+        return false
+    }
+
+    private fun openMenu(row: Int) {
+        val e = lrows[row].e ?: return
+        menuRow = row
+        menuN = 0
+        menuActs[menuN++] = if (isPinned(e)) 1 else 0
+        menuActs[menuN++] = 2
+        menuActs[menuN++] = 3
+        menuOpen = true
+        // el dedo que lo abrió sigue apoyado: al levantarlo no debe cerrarlo
+        menuFresh = true
+        menuSp.snap(0f)
+        menuSp.to(1f)
+        Hx.fire(this, S.HE_LONG)
+        ticker.kick()
+    }
+
+    private fun closeMenu() {
+        if (!menuOpen) return
+        menuOpen = false
+        menuSp.to(0f)
+        ticker.kick()
+    }
+
+    private fun menuLabel(a: Int): String = when (a) {
+        0 -> "anclar a Inicio"
+        1 -> "desanclar de Inicio"
+        2 -> "información de la aplicación"
+        else -> "desinstalar"
+    }
+
+    private fun layoutMenu(top: Float, bottom: Float) {
+        menuItemH = 68f * wpU
+        val ph = menuItemH * menuN + 20f * wpU
+        if (menuRow !in lrows.indices) return
+        val rt = rowTop(menuRow)
+        val below = rt + lrows[menuRow].h
+        val y0 = if (below + ph < bottom - 12f * wpU) below else max(top, rt - ph)
+        menuRect.set(0f, y0, width.toFloat(), y0 + ph)
+    }
+
+    private fun drawMenu(c: Canvas, top: Float, bottom: Float) {
+        val k = clamp01(menuSp.value)
+        if (k <= 0.001f || menuRow !in lrows.indices) return
+        layoutMenu(top, bottom)
+        // el panel se despliega de arriba abajo, claro sobre el tema oscuro (como en Windows Phone)
+        val h = menuRect.height() * (0.35f + 0.65f * k)
+        val dark = bgMode() != 1
+        tileP.color = if (dark) 0xFFF2F2F2.toInt() else 0xFF1F1F1F.toInt()
+        tileP.alpha = (255f * k).toInt()
+        c.drawRect(menuRect.left, menuRect.top, menuRect.right, menuRect.top + h, tileP)
+        c.save()
+        c.clipRect(menuRect.left, menuRect.top, menuRect.right, menuRect.top + h)
+        rowP.color = if (dark) Color.BLACK else Color.WHITE
+        val ts = rowP.textSize
+        rowP.textSize = 28f * wpU
+        for (j in 0 until menuN) {
+            val y = menuRect.top + 10f * wpU + j * menuItemH
+            if (j == menuDown) {
+                tileP.color = accentOf(null)
+                tileP.alpha = (255f * k).toInt()
+                c.drawRect(menuRect.left, y, menuRect.right, y + menuItemH, tileP)
+            }
+            rowP.alpha = (255f * k).toInt()
+            c.drawText(menuLabel(menuActs[j]), lMargin, y + menuItemH / 2f - (rowP.descent() + rowP.ascent()) / 2f, rowP)
+        }
+        rowP.textSize = ts
+        c.restore()
+    }
+
+    private var menuFresh = false
+
+    private fun menuTouch(ev: MotionEvent): Boolean {
+        if (menuFresh) {
+            if (ev.actionMasked == MotionEvent.ACTION_UP || ev.actionMasked == MotionEvent.ACTION_CANCEL) menuFresh = false
+            if (ev.actionMasked != MotionEvent.ACTION_DOWN) return true
+            menuFresh = false
+        }
+        val inside = menuRect.contains(ev.x, ev.y)
+        val j = if (inside) ((ev.y - menuRect.top - 10f * wpU) / max(1f, menuItemH)).toInt().coerceIn(0, menuN - 1) else -1
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                menuDown = j
+                invalidate()
+            }
+            MotionEvent.ACTION_UP -> {
+                val d = menuDown
+                menuDown = -1
+                val e = lrows.getOrNull(menuRow)?.e
+                if (d >= 0 && d == j && e != null) {
+                    closeMenu()
+                    menuAction(menuActs[d], e)
+                } else if (!inside) closeMenu()
+                invalidate()
+            }
+            MotionEvent.ACTION_CANCEL -> menuDown = -1
+        }
+        return true
+    }
+
+    private fun menuAction(a: Int, e: AppEntry) {
+        when (a) {
+            0 -> pin(e)
+            1 -> unpin(e.key)
+            2 -> try {
+                context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + e.pkg)))
+            } catch (t: Throwable) {
+            }
+            else -> try {
+                @Suppress("DEPRECATION")
+                context.startActivity(Intent(Intent.ACTION_UNINSTALL_PACKAGE, Uri.parse("package:" + e.pkg)))
+            } catch (t: Throwable) {
+            }
+        }
+    }
+
+    /** anclar a Inicio: el mosaico aparece al final, en mediano, y se vuelve a los mosaicos para verlo */
+    private fun pin(e: AppEntry) {
+        if (isPinned(e)) return
+        val order = Prefs.metroOrder()
+        order.add(e.key)
+        Prefs.setMetroOrder(order)
+        val sz = Prefs.metroSizes()
+        sz[e.key] = MEDIUM
+        Prefs.setMetroSizes(sz)
+        onDataChanged()
+        toPage(0)
+        scroll.stop()
+        Mo.tune(scroll.sp, S.MO_SCROLL, 170f, 1f)
+        scroll.sp.to(scroll.max)
+        ticker.kick()
+    }
+
+    private fun unpin(key: String) {
+        val order = Prefs.metroOrder()
+        if (!order.remove(key)) return
+        Prefs.setMetroOrder(order)
+        if (editing) {
+            editing = false
+            sel = -1
+            editSp.to(0f)
+        }
+        onDataChanged()
+        Hx.fire(this, S.HE_SETTING)
+    }
+
+    // ---------------------------------------------------------------- Búsqueda
+    private fun startSearch() {
+        searching = true
+        qbuf.clear()
+        queryNorm = ""
+        queryShown = ""
+        buildList()
+        lscroll.jump(0f)
+        isFocusable = true
+        isFocusableInTouchMode = true
+        requestFocus()
+        val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+        imm.restartInput(this)
+        imm.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT)
+        // algunas capas (MIUI) necesitan un segundo intento
+        uiHandler.postDelayed({ if (searching) imm.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT) }, 180L)
+        caretOn = true
+        uiHandler.removeCallbacks(caretRun)
+        uiHandler.postDelayed(caretRun, 530L)
+        invalidate()
+    }
+
+    private fun endSearch() {
+        if (!searching) return
+        searching = false
+        uiHandler.removeCallbacks(caretRun)
+        try {
+            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+            imm.hideSoftInputFromWindow(windowToken, 0)
+        } catch (t: Throwable) {
+        }
+        clearFocus()
+        isFocusableInTouchMode = false
+        qbuf.clear()
+        queryNorm = ""
+        queryShown = ""
+        buildList()
+        lscroll.jump(0f)
+        invalidate()
+    }
+
+    private fun queryChanged() {
+        queryShown = qbuf.toString()
+        queryNorm = norm(queryShown.trim())
+        buildList()
+        lscroll.jump(0f)
+        caretOn = true
+        invalidate()
+    }
+
+    private fun launchFirst() {
+        for (i in lrows.indices) if (lrows[i].kind == 2) {
+            launchRow(i)
+            return
+        }
+    }
+
+    override fun onCheckIsTextEditor(): Boolean = searching
+
+    override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
+        if (!searching) return null
+        outAttrs.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        outAttrs.imeOptions = EditorInfo.IME_ACTION_GO or EditorInfo.IME_FLAG_NO_EXTRACT_UI or EditorInfo.IME_FLAG_NO_FULLSCREEN
+        outAttrs.initialSelStart = qbuf.length
+        outAttrs.initialSelEnd = qbuf.length
+        return object : BaseInputConnection(this@MetroView, true) {
+            override fun getEditable(): Editable = qbuf
+            override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean {
+                val r = super.commitText(text, newCursorPosition)
+                queryChanged()
+                return r
+            }
+            override fun setComposingText(text: CharSequence?, newCursorPosition: Int): Boolean {
+                val r = super.setComposingText(text, newCursorPosition)
+                queryChanged()
+                return r
+            }
+            override fun deleteSurroundingText(beforeLength: Int, afterLength: Int): Boolean {
+                val r = super.deleteSurroundingText(beforeLength, afterLength)
+                queryChanged()
+                return r
+            }
+            override fun finishComposingText(): Boolean {
+                val r = super.finishComposingText()
+                queryChanged()
+                return r
+            }
+            override fun performEditorAction(actionCode: Int): Boolean {
+                launchFirst()
+                return true
+            }
+        }
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (searching) {
+            when {
+                keyCode == KeyEvent.KEYCODE_DEL -> {
+                    if (qbuf.isNotEmpty()) qbuf.delete(qbuf.length - 1, qbuf.length)
+                    queryChanged()
+                    return true
+                }
+                keyCode == KeyEvent.KEYCODE_ENTER -> {
+                    launchFirst()
+                    return true
+                }
+                event.unicodeChar != 0 && keyCode != KeyEvent.KEYCODE_BACK -> {
+                    qbuf.append(event.unicodeChar.toChar())
+                    queryChanged()
+                    return true
+                }
+            }
+        }
+        return super.onKeyDown(keyCode, event)
+    }
+
+    override fun onApplyWindowInsets(insets: WindowInsets): WindowInsets {
+        if (Build.VERSION.SDK_INT >= 30) {
+            val h = insets.getInsets(WindowInsets.Type.ime()).bottom.toFloat()
+            if (h != imeH) {
+                imeH = h
+                layoutRows()
+                invalidate()
+            }
+        }
+        return super.onApplyWindowInsets(insets)
+    }
+
+    // ---------------------------------------------------------------- Abrir desde la lista
+    private fun launchRow(i: Int) {
+        val e = lrows.getOrNull(i)?.e ?: return
+        val r = iconRectOf(i)
+        if (searching) endSearchKeepRow()
+        if (!S.b(S.MZ_TURN) || S.b(S.P_REDUCE)) {
+            listener?.onLaunch(e, r)
+            return
+        }
+        turnRect.set(r)
+        turnOut = true
+        turnFromList = true
+        turnFired = false
+        turnRow = lrows.indexOfFirst { it.e?.key == e.key }
+        turnSel = -1
+        turnLaunch = e
+        turnT0 = SystemClock.uptimeMillis()
+        ticker.kick()
+    }
+
+    /** al abrir desde la búsqueda se esconde el teclado pero la lista queda como estaba */
+    private fun endSearchKeepRow() {
+        try {
+            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+            imm.hideSoftInputFromWindow(windowToken, 0)
+        } catch (t: Throwable) {
+        }
+    }
+
+    private var turnLaunch: AppEntry? = null
+
+    // ---------------------------------------------------------------- Atrás e inicio
+    /** atrás: cierra lo último que se abrió; true si había algo */
+    fun back(): Boolean {
+        when {
+            menuOpen -> closeMenu()
+            jumpOpen -> closeJump()
+            searching -> endSearch()
+            pageSp.target > 0.5f -> toPage(0)
+            editing -> exitEdit()
+            else -> return false
+        }
+        return true
+    }
+
+    /** botón de inicio: vuelve a los mosaicos desde cualquier sitio */
+    fun home(): Boolean {
+        var any = false
+        if (menuOpen) { closeMenu(); any = true }
+        if (jumpOpen) { closeJump(); any = true }
+        if (searching) { endSearch(); any = true }
+        if (pageSp.target > 0.5f) { toPage(0); any = true }
+        if (editing) { exitEdit(); any = true }
+        return any
+    }
+
+    /** el inicio deja de verse: se cierra lo pasajero (la lista se queda, como en Windows Phone) */
+    fun closeOverlays() {
+        if (menuOpen) closeMenu()
+        if (jumpOpen) closeJump()
+        if (searching) endSearch()
+        if (editing) exitEdit()
+    }
+
     // ================================================================ Toques
+    private var hdrag = false
+    private var pageStart = 0f
+
     override fun onTouchEvent(ev: MotionEvent): Boolean {
         if (turnOut) return true
+        if (jumpOpen) return jumpTouch(ev)
+        if (menuOpen || menuSp.value > 0.05f) return if (menuOpen) menuTouch(ev) else true
         val x = ev.x
         val y = ev.y
+        val onList = pageSp.target > 0.5f
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 badgeDown = 0
-                if (editing && !draggingTile) {
+                if (!onList && editing && !draggingTile) {
                     if (badgeOpt.contains(x, y)) badgeDown = 1 else if (badgeSize.contains(x, y)) badgeDown = 2
                     if (badgeDown != 0) {
                         Hx.fire(this, S.HE_ICON)
@@ -1181,20 +2109,52 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
                 fingerY = y
                 moved = false
                 scrolling = false
+                hdrag = false
                 longDone = false
-                scroll.stop()
-                val i = hit(x, y)
-                downIdx = i
-                if (i >= 0) {
-                    if (editing) {
-                        if (i != sel) {
-                            sel = i
+                // si las pantallas se estaban deslizando, el dedo las atrapa
+                if (pageSp.active) {
+                    pageSp.snap(pageSp.value)
+                    hdrag = true
+                    moved = true
+                    pageStart = pageSp.value
+                }
+                downIdx = -1
+                lDown = -1
+                if (onList) {
+                    lscroll.stop()
+                    if (!hdrag) {
+                        val r = listHit(x, y)
+                        lDown = r
+                        if (r >= 0 && lrows[r].kind == 2) {
+                            if (S.b(S.MZ_TILT)) {
+                                val rt = rowTop(r)
+                                tilting = -1
+                                ltilt = r
+                                tiltX = ((x - width / 2f) / (width / 2f)).coerceIn(-1f, 1f)
+                                tiltY = ((y - (rt + lrows[r].h / 2f)) / (lrows[r].h / 2f)).coerceIn(-1f, 1f)
+                                tiltSp.tune(1400f, 1f)
+                                tiltSp.to(1f)
+                            }
                             Hx.fire(this, S.HE_ICON)
+                            uiHandler.removeCallbacks(longList)
+                            uiHandler.postDelayed(longList, longMs)
                         }
-                    } else {
-                        startTilt(i, x, y)
-                        uiHandler.removeCallbacks(longRun)
-                        uiHandler.postDelayed(longRun, longMs)
+                    }
+                } else {
+                    scroll.stop()
+                    val i = if (hdrag) -1 else hit(x, y)
+                    downIdx = i
+                    if (i >= 0) {
+                        if (editing) {
+                            if (i != sel) {
+                                sel = i
+                                Hx.fire(this, S.HE_ICON)
+                            }
+                        } else {
+                            startTilt(i, x, y)
+                            uiHandler.removeCallbacks(longRun)
+                            uiHandler.postDelayed(longRun, longMs)
+                        }
                     }
                 }
                 ticker.kick()
@@ -1205,67 +2165,109 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
                 vt?.addMovement(ev)
                 fingerX = x
                 fingerY = y
-                if (!moved && (abs(x - dX) > slop || abs(y - dY) > slop)) {
+                val dx = x - dX
+                val dy = y - dY
+                if (!moved && (abs(dx) > slop || abs(dy) > slop)) {
                     moved = true
                     uiHandler.removeCallbacks(longRun)
-                    if (editing && downIdx >= 0 && downIdx == sel) {
+                    uiHandler.removeCallbacks(longList)
+                    if (!onList && editing && downIdx >= 0 && downIdx == sel) {
                         startDrag(dX, dY)
+                    } else if (!editing && !searching && abs(dx) > abs(dy) * 1.2f && (if (onList) dx > 0f else dx < 0f)) {
+                        // deslizar a los lados: de los mosaicos a la lista y al revés
+                        hdrag = true
+                        pageStart = pageSp.value
+                        releaseTilt()
                     } else {
                         releaseTilt()
                         scrolling = true
                         lastY = y
                     }
                 }
-                if (draggingTile) {
-                    dragX = x - grabDx
-                    dragY = y - grabDy
-                    reorderAt(x, y)
-                    ticker.kick()
-                } else if (scrolling) {
-                    scroll.drag(lastY - y)
-                    lastY = y
-                    ticker.kick()
+                when {
+                    draggingTile -> {
+                        dragX = x - grabDx
+                        dragY = y - grabDy
+                        reorderAt(x, y)
+                        ticker.kick()
+                    }
+                    hdrag -> {
+                        pageSp.snap((pageStart - dx / max(1f, width.toFloat())).coerceIn(0f, 1f))
+                        ticker.kick()
+                    }
+                    scrolling -> {
+                        if (onList) lscroll.drag(lastY - y) else scroll.drag(lastY - y)
+                        lastY = y
+                        ticker.kick()
+                    }
                 }
                 return true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 uiHandler.removeCallbacks(longRun)
+                uiHandler.removeCallbacks(longList)
                 if (badgeDown != 0) {
                     val b = badgeDown
                     badgeDown = 0
                     if (ev.actionMasked == MotionEvent.ACTION_UP) {
-                        if (b == 1 && badgeOpt.contains(x, y) && sel in items.indices) listener?.onMenu(items[sel], itemRect(sel))
+                        if (b == 1 && badgeOpt.contains(x, y) && sel in items.indices) unpin(items[sel].key)
                         if (b == 2 && badgeSize.contains(x, y)) resizeSel()
                     }
                     return true
                 }
                 vt?.addMovement(ev)
                 vt?.computeCurrentVelocity(1000)
-                val v = -(vt?.yVelocity ?: 0f)
+                val vy = -(vt?.yVelocity ?: 0f)
+                val vx = vt?.xVelocity ?: 0f
                 vt?.recycle()
                 vt = null
                 val i = downIdx
+                val lr = lDown
                 downIdx = -1
+                lDown = -1
                 releaseTilt()
                 when {
                     draggingTile -> drop()
-                    scrolling -> scroll.release(v)
+                    hdrag -> {
+                        val vp = -vx / max(1f, width.toFloat())
+                        val go = if (abs(vp) > 0.5f) vp > 0f else pageSp.value > 0.5f
+                        toPage(if (go) 1 else 0, vp)
+                    }
+                    scrolling -> if (onList) lscroll.release(vy) else scroll.release(vy)
                     else -> {
-                        scroll.release(0f)
+                        if (onList) lscroll.release(0f) else scroll.release(0f)
                         if (ev.actionMasked == MotionEvent.ACTION_UP && !longDone) {
-                            if (editing) {
+                            if (onList) listTap(lr)
+                            else if (editing) {
                                 if (i < 0) exitEdit()
                             } else if (i in items.indices) {
                                 launch(i)
+                            } else if (arrowRect.contains(x, y)) {
+                                toPage(1)
                             }
                         }
                     }
                 }
                 scrolling = false
+                hdrag = false
                 ticker.kick()
                 return true
             }
         }
         return true
+    }
+
+    private fun listTap(r: Int) {
+        if (r !in lrows.indices) return
+        when (lrows[r].kind) {
+            0 -> startSearch()
+            1 -> openJump()
+            2 -> launchRow(r)
+            4 -> {
+                val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+                requestFocus()
+                imm.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT)
+            }
+        }
     }
 }

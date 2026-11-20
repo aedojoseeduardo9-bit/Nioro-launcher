@@ -696,7 +696,8 @@ class HomeView(ctx: Context) : View(ctx) {
         // primera vez: se apunta el diseño actual del dock (para animar si luego cambia)
         if (dockStamp == Long.MIN_VALUE) dockStamp = dockDesignStamp()
         if (pagesOff && pageSp.value != 0f) pageSp.snap(0f)
-        host?.screenArea(gridTop - dp(6f), if (dockOn) dockTopY() - dp(2f) else h - insetBottom - dp(8f))
+        if (ScreenModes.fullArea(sm)) host?.screenArea(insetTop, if (dockOn) dockTopY() - dp(2f) else h - insetBottom)
+        else host?.screenArea(gridTop - dp(6f), if (dockOn) dockTopY() - dp(2f) else h - insetBottom - dp(8f))
     }
 
     /** modo de pantalla: sin páginas de iconos / sin dock */
