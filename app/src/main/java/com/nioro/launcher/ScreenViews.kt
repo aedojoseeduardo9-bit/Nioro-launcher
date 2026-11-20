@@ -62,7 +62,7 @@ abstract class HomeModeView(ctx: Context) : AppsView(ctx) {
      * degradado. Solo aparece en el lado donde hay más contenido (arriba, si ya se bajó; abajo, si queda).
      */
     private val fadeP = Paint(Paint.ANTI_ALIAS_FLAG).apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT) }
-    private val fadeLen get() = dp(34f)
+    protected val fadeLen: Float get() = dp(34f)
     private var gA: LinearGradient? = null
     private var gB: LinearGradient? = null
     private var gKey = ""
@@ -104,6 +104,9 @@ abstract class HomeModeView(ctx: Context) : AppsView(ctx) {
         }
     }
 
+    protected open fun fadeTopK(): Float = if (fadeAlways) 1f else clamp01((scroll.value - scroll.min) / fadeLen)
+    protected open fun fadeBottomK(): Float = if (fadeAlways) 1f else clamp01((scroll.max - scroll.value) / fadeLen)
+
     override fun draw(c: Canvas) {
         if (embedded) drawUnder(c)
         val top = insetTop
@@ -116,8 +119,8 @@ abstract class HomeModeView(ctx: Context) : AppsView(ctx) {
         super.draw(c)
         val f = fadeLen
         // cuánto se desvanece cada borde (aparece poco a poco al empezar a desplazar)
-        val ka = if (fadeAlways) 1f else clamp01((scroll.value - scroll.min) / f)
-        val kb = if (fadeAlways) 1f else clamp01((scroll.max - scroll.value) / f)
+        val ka = fadeTopK()
+        val kb = fadeBottomK()
         val p = if (fc == 0) fadeP else tintP
         if (ka > 0.01f) {
             p.shader = if (fc == 0) gA else tA

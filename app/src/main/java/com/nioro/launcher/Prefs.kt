@@ -89,6 +89,8 @@ object Prefs {
     var blur by BoolPref("blur", true)
     var tilt by BoolPref("tilt", false)
     var seeded by BoolPref("seeded", false)
+    /** Mosaico con lista de apps: en el inicio solo las apps ancladas (versión 2 del Mosaico) */
+    var metroV2 by BoolPref("metroV2", false)
     /** buscar actualizaciones solo al volver al inicio */
     var autoUpdate by BoolPref("autoUpdate", true)
     var lastUpdateCheck: Long

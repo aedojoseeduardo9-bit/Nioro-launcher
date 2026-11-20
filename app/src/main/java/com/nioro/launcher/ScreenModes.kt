@@ -39,7 +39,7 @@ object ScreenModes {
     val DESC = arrayOf(
         "Páginas de iconos y dock. Desliza hacia arriba para ver todas las apps.",
         "Sin menú de apps: todas tus apps viven en las páginas del inicio, como en el iPhone. Deslizar hacia arriba no abre nada. Si vuelves a otro modo, tu inicio queda como estaba.",
-        "Calcado de Windows Phone: mosaicos de colores lisos en cuatro tamaños, mosaicos vivos que giran, inclinación al tocar y torniquete al abrir. Mantén pulsado un mosaico para moverlo o cambiar su tamaño. Sin menú de apps.",
+        "Calcado de Windows Phone: mosaicos de colores lisos en cuatro tamaños, mosaicos vivos, inclinación al tocar y torniquete. Desliza a la izquierda para la lista de apps con lupa y letras. Mantén pulsado un mosaico para moverlo, cambiar su tamaño o desanclarlo.",
         "Una app por tarjeta grande: pásalas a los lados con el dedo y toca la del centro para abrirla. Sin menú de apps: el inicio ya lo es.",
         "Solo el reloj y todas tus apps en una lista de texto grande que se desplaza. Sin iconos, sin dock y sin menú de apps.",
         "Pantalla limpia: solo el reloj y el dock. Desliza hacia arriba para ver tus apps.",
@@ -131,8 +131,14 @@ class ScreenHost(ctx: Context) : FrameLayout(ctx) {
         view?.setData(AppRepo.sorted(AppRepo.visible()), AppRepo.sorted(AppRepo.apps))
     }
 
-    /** atrás o inicio: el Mosaico sale primero de su modo edición; true si lo hizo */
-    fun back(): Boolean = (view as? MetroView)?.exitEdit() == true
+    /** botón atrás: el Mosaico cierra primero lo que tenga abierto (menú, letras, búsqueda, lista...) */
+    fun back(): Boolean = (view as? MetroView)?.back() == true
+    /** botón de inicio: el Mosaico vuelve a sus mosaicos; true si había algo que cerrar */
+    fun home(): Boolean = (view as? MetroView)?.home() == true
+    /** el launcher deja de verse */
+    fun stopped() {
+        (view as? MetroView)?.closeOverlays()
+    }
 
     /** zona libre entre el reloj y el dock (coordenadas de la pantalla) */
     fun setArea(top: Float, bottom: Float) {

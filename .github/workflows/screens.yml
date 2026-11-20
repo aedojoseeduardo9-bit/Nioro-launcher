@@ -6,6 +6,11 @@ on:
   push:
     branches-ignore: [ main, master ]
   workflow_dispatch:
+    inputs:
+      solo:
+        description: "Solo una parte de las capturas (mosaico) o vacío para todas"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -41,6 +46,8 @@ jobs:
           sudo udevadm trigger --name-match=kvm
       - name: Capturas en un Android virtual
         uses: reactivecircus/android-emulator-runner@v2
+        env:
+          SOLO: ${{ inputs.solo }}
         with:
           api-level: 30
           target: default
