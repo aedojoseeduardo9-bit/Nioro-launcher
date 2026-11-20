@@ -109,6 +109,16 @@ class WindView(ctx: Context) : AppsView(ctx), SensorEventListener {
     private var magnet = false
     private var magEdge = NONE
     private var magPow = 0f
+    /** intensidad del campo de la Tierra en reposo (µT): girar el móvil no la cambia, un imán sí */
+    private var baseMag = 0f
+    private var lastAttract = 0L
+    /** onda de choque al detectar el imán (1 -> 0) y destello del borde */
+    private var shock = 0f
+    private var shockEdge = NONE
+    private var glow = 0f
+    /** rebote de cada app al pegarse (1 -> 0) */
+    private val clack = FloatArray(MAX)
+    private var flow = 0f
     private var gBaseX = 0f
     private var gBaseY = 9.8f
     private var shakeT = 0L
@@ -287,7 +297,8 @@ class WindView(ctx: Context) : AppsView(ctx), SensorEventListener {
         baseReady = 0
         try {
             sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let { sm.registerListener(this, it, SensorManager.SENSOR_DELAY_UI) }
-            if (S.b(S.ZW_MAGNET)) sm.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)?.let { sm.registerListener(this, it, SensorManager.SENSOR_DELAY_UI) }
+            // el imán se nota antes con lecturas más seguidas (unas 50 por segundo)
+            if (S.b(S.ZW_MAGNET)) sm.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)?.let { sm.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME) }
         } catch (t: Throwable) {
         }
     }
@@ -336,11 +347,13 @@ class WindView(ctx: Context) : AppsView(ctx), SensorEventListener {
     }
 
     private fun magnetic(v: FloatArray) {
+        val mag = sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
         if (baseReady < 12) {
             // los primeros valores fijan el campo de la Tierra (unos 25-65 µT)
             baseBx += (v[0] - baseBx) * 0.3f
             baseBy += (v[1] - baseBy) * 0.3f
             baseBz += (v[2] - baseBz) * 0.3f
+            baseMag += (mag - baseMag) * 0.3f
             baseReady++
             return
         }
@@ -348,32 +361,62 @@ class WindView(ctx: Context) : AppsView(ctx), SensorEventListener {
         val ay = v[1] - baseBy
         val az = v[2] - baseBz
         val anomaly = sqrt(ax * ax + ay * ay + az * az)
-        if (!magnet && anomaly > 140f) {
-            // ¡un imán! el borde es hacia donde apunta la alteración del campo
+        // la intensidad no cambia al girar el móvil: si sube de golpe, es un imán (aunque sea débil)
+        val rise = mag - baseMag
+        val strong = clamp01((max(rise, anomaly * 0.6f) - 30f) / 220f)
+        magPow += (strong - magPow) * 0.35f
+        val now = SystemClock.uptimeMillis()
+        if (!magnet && (rise > 38f || anomaly > 95f)) {
             magnet = true
-            val sxs = ax
-            val sys = -ay
-            magEdge = if (abs(sxs) > abs(sys)) (if (sxs > 0f) RIGHT else LEFT) else (if (sys > 0f) BOTTOM else TOP)
-            attract(magEdge)
-        } else if (magnet && anomaly < 70f) {
+            magEdge = edgeOf(ax, ay)
+            shock = 1f
+            shockEdge = magEdge
+            glow = 1f
+            Hx.fire(this, S.HE_LONG)
+            attract(magEdge, 3 + (strong * 6f).toInt())
+            lastAttract = now
+        } else if (magnet && rise < 16f && anomaly < 45f) {
             magnet = false
+        } else if (magnet) {
+            // mientras el imán sigue cerca: si se mueve a otro borde, también atrae allí; y cuanto más
+            // fuerte, más apps se van pegando
+            val e = edgeOf(ax, ay)
+            if (e != magEdge && anomaly > 60f) {
+                magEdge = e
+                shock = 1f
+                shockEdge = e
+                glow = 1f
+                attract(e, 3 + (strong * 6f).toInt())
+                lastAttract = now
+            } else if (now - lastAttract > 320L && strong > 0.25f) {
+                attract(magEdge, 1 + (strong * 2f).toInt())
+                lastAttract = now
+            }
+            glow = max(glow, strong)
         }
-        magPow = clamp01((anomaly - 40f) / 300f)
         if (!magnet) {
-            // la base sigue despacio al campo normal (girar el móvil lo cambia un poco)
-            baseBx += (v[0] - baseBx) * 0.01f
-            baseBy += (v[1] - baseBy) * 0.01f
-            baseBz += (v[2] - baseBz) * 0.01f
+            // la base sigue despacio al campo normal (girar el móvil cambia la dirección, no la intensidad)
+            baseBx += (v[0] - baseBx) * 0.02f
+            baseBy += (v[1] - baseBy) * 0.02f
+            baseBz += (v[2] - baseBz) * 0.02f
+            baseMag += (mag - baseMag) * 0.01f
         }
-        if (magnet) wake()
+        if (magnet || magPow > 0.03f) wake()
+    }
+
+    /** el borde hacia el que apunta la alteración del campo (x a la derecha, y hacia abajo en pantalla) */
+    private fun edgeOf(ax: Float, ay: Float): Int {
+        val sxs = ax
+        val sys = -ay
+        return if (abs(sxs) > abs(sys)) (if (sxs > 0f) RIGHT else LEFT) else (if (sys > 0f) BOTTOM else TOP)
     }
 
     /** las apps libres más cercanas a ese borde vuelan hacia él y se quedan pegadas */
-    private fun attract(e: Int) {
+    private fun attract(e: Int, count: Int) {
         var taken = 0
         for (i in 0 until n) if (edge[i] == e) taken++
         val cap = edgeCapacity(e)
-        val want = min(5, cap - taken)
+        val want = min(count, cap - taken)
         if (want <= 0) return
         for (k in 0 until want) {
             var best = -1
@@ -395,6 +438,15 @@ class WindView(ctx: Context) : AppsView(ctx), SensorEventListener {
             edge[best] = e
             slot[best] = freeSlot(e)
             stickT[best] = 0f
+            // sale disparada hacia su sitio (el resorte la frena justo al llegar, con un golpe)
+            slotPos(e, slot[best], slotTmp)
+            val ddx = slotTmp[0] - px[best]
+            val ddy = slotTmp[1] - py[best]
+            val d = max(1f, hypot(ddx, ddy))
+            val sp = dp(1500f) + d * 3f
+            vx[best] = ddx / d * sp
+            vy[best] = ddy / d * sp
+            av[best] += (rnd.nextFloat() - 0.5f) * 14f
         }
         saveStuck()
         Hx.fire(this, S.HE_DOCK)
@@ -526,6 +578,11 @@ class WindView(ctx: Context) : AppsView(ctx), SensorEventListener {
         val awake = now - lastWake < calm || vortex || magnet
         amp += ((if (awake) 1f else 0f) - amp) * (1f - exp(-dt * (if (awake) 3f else 0.9f)))
         tornado = max(0f, tornado - dt * 0.45f)
+        shock = max(0f, shock - dt * 1.6f)
+        glow = max(if (magnet) magPow else 0f, glow - dt * 1.2f)
+        if (!magnet) magPow = max(0f, magPow - dt * 0.8f)
+        flow += dt * (0.6f + 2.4f * magPow)
+        for (i in 0 until n) if (clack[i] > 0f) clack[i] = max(0f, clack[i] - dt * 3.2f)
         vPow = if (vortex) min(1f, vPow + dt * 1.6f) else max(0f, vPow - dt * 3f)
         for (g in 0 until gt.size) if (gt[g] > 0f) gt[g] = max(0f, gt[g] - dt * 1.7f)
         tiltX *= exp(-dt * 1.2f)
@@ -537,21 +594,39 @@ class WindView(ctx: Context) : AppsView(ctx), SensorEventListener {
             if (edge[i] != NONE) {
                 // pegada a un borde: va a su sitio con un resorte (y un pequeño temblor si el imán sigue)
                 slotPos(edge[i], slot[i], slotTmp)
-                val k = 60f
-                val d = 2f * sqrt(k) * 0.55f
+                // tiembla mientras el imán sigue cerca (más cuanto más fuerte)
+                if (magPow > 0.05f) {
+                    slotTmp[0] += sin(tNow * 47f + i) * dp(2.2f) * magPow
+                    slotTmp[1] += cos(tNow * 53f + i * 1.7f) * dp(2.2f) * magPow
+                }
+                val k = 170f
+                val d = 2f * sqrt(k) * 0.42f
                 vx[i] += ((slotTmp[0] - px[i]) * k - vx[i] * d) * dt
                 vy[i] += ((slotTmp[1] - py[i]) * k - vy[i] * d) * dt
-                av[i] += (-ang[i] * 80f - av[i] * 10f) * dt
-                if (stickT[i] < 1f) {
-                    stickT[i] = min(1f, stickT[i] + dt * 2.2f)
-                    if (stickT[i] >= 1f) Hx.fire(this, S.HE_DOCK)
+                av[i] += (-ang[i] * 120f - av[i] * 12f) * dt
+                if (stickT[i] < 1f && hypot(slotTmp[0] - px[i], slotTmp[1] - py[i]) < size * 0.35f) {
+                    // ¡clac! llega a su sitio: golpe, rebote y vibración
+                    stickT[i] = 1f
+                    clack[i] = 1f
+                    Hx.fire(this, S.HE_DOCK)
                 }
+                if (stickT[i] < 1f) stickT[i] = min(0.99f, stickT[i] + dt)
             } else {
                 airAt(px[i], py[i])
                 // la hoja se deja llevar: cuanto más al fondo, más despacio
                 val drag = 1.6f * (0.6f + 0.4f * zz[i])
                 vx[i] += (air[0] * zz[i] - vx[i]) * drag * dt
                 vy[i] += (air[1] * zz[i] - vy[i]) * drag * dt
+                // con un imán cerca, todas las libres se ven atraídas hacia ese borde (y se inclinan hacia él)
+                if (magPow > 0.03f && magEdge != NONE) {
+                    val pull = dp(2600f) * magPow * magPow
+                    when (magEdge) {
+                        LEFT -> vx[i] -= pull * dt
+                        RIGHT -> vx[i] += pull * dt
+                        TOP -> vy[i] -= pull * dt
+                        else -> vy[i] += pull * dt
+                    }
+                }
                 // revoloteo: gira con el viento cruzado
                 val want = (vx[i] / dp(400f)).coerceIn(-0.9f, 0.9f) + sin(tNow * 1.7f + ph[i]) * 0.12f * amp
                 av[i] += ((want - ang[i]) * 9f - av[i] * 4f) * dt
@@ -601,7 +676,7 @@ class WindView(ctx: Context) : AppsView(ctx), SensorEventListener {
         var outside = false
         for (i in 0 until n) if (edge[i] == NONE && (px[i] < size * 0.5f || px[i] > width - size * 0.5f)) outside = true
         val still = energy / max(1, n) < dp(3f) && !outside
-        return amp > 0.01f || !still || vPow > 0f || tornado > 0f || anyGust() || magnet
+        return amp > 0.01f || !still || vPow > 0f || tornado > 0f || anyGust() || magnet || shock > 0f || glow > 0.01f
     }
 
     private fun anyGust(): Boolean {
@@ -682,7 +757,7 @@ class WindView(ctx: Context) : AppsView(ctx), SensorEventListener {
             }
         }
         // líneas del campo magnético mientras hay un imán cerca
-        if (magPow > 0.05f && magEdge != NONE) drawField(c)
+        if ((magPow > 0.03f || glow > 0.02f || shock > 0f) && magEdge != NONE) drawField(c)
         // remolino bajo el dedo: anillos que giran
         if (vPow > 0.02f) {
             linePaint.color = Color.WHITE
@@ -700,7 +775,9 @@ class WindView(ctx: Context) : AppsView(ctx), SensorEventListener {
             if ((pass == 0) == front) continue
             val e = list[i]
             val z = if (edge[i] != NONE) 1f else zz[i]
-            val s = size * (0.72f + 0.28f * z)
+            // al pegarse: se aplasta contra el borde y rebota
+            val cl = clack[i]
+            val s = size * (0.72f + 0.28f * z) * (1f + 0.22f * cl * sin(cl * 9.4f))
             val x = px[i] + if (edge[i] == NONE) parX * dp(22f) * (1f - z) else 0f
             val y = py[i] + if (edge[i] == NONE) parY * dp(16f) * (1f - z) else 0f
             val a = enter * (0.55f + 0.45f * z)
@@ -721,31 +798,79 @@ class WindView(ctx: Context) : AppsView(ctx), SensorEventListener {
     }
 
     private fun drawField(c: Canvas) {
-        linePaint.color = 0xFFB9D8FF.toInt()
-        linePaint.strokeWidth = dp(1.3f)
         val top = areaTop()
         val bottom = areaBottom()
-        for (k in -3..3) {
-            field.reset()
-            val wob = sin(tNow * 4f + k) * dp(8f)
-            when (magEdge) {
-                LEFT, RIGHT -> {
-                    val ex = if (magEdge == LEFT) 0f else width.toFloat()
-                    val dir = if (magEdge == LEFT) 1f else -1f
-                    val cy = (top + bottom) / 2f
-                    field.moveTo(ex, cy - dp(30f) * k - dp(12f))
-                    field.quadTo(ex + dir * (dp(90f) + abs(k) * dp(34f)) + wob, cy + k * dp(10f), ex, cy + dp(30f) * k + dp(12f))
-                }
-                else -> {
-                    val ey = if (magEdge == TOP) top else bottom
-                    val dir = if (magEdge == TOP) 1f else -1f
-                    val cx = width / 2f
-                    field.moveTo(cx - dp(30f) * k - dp(12f), ey)
-                    field.quadTo(cx + k * dp(10f), ey + dir * (dp(90f) + abs(k) * dp(34f)) + wob, cx + dp(30f) * k + dp(12f), ey)
-                }
+        val p = max(magPow, glow * 0.8f)
+        val e = magEdge
+        val vertical = e == LEFT || e == RIGHT
+        // destello del borde: una franja azulada que late
+        val gw = dp(70f) * (0.4f + 0.6f * p)
+        dotPaint.color = 0xFF8EC5FF.toInt()
+        for (k in 0 until 6) {
+            dotPaint.alpha = (34f * p * (1f - k / 6f) * (0.8f + 0.2f * sin(tNow * 9f))).toInt()
+            val w = gw * (k + 1) / 6f
+            when (e) {
+                LEFT -> c.drawRect(0f, top, w, bottom, dotPaint)
+                RIGHT -> c.drawRect(width - w, top, width.toFloat(), bottom, dotPaint)
+                TOP -> c.drawRect(0f, top, width.toFloat(), top + w, dotPaint)
+                else -> c.drawRect(0f, bottom - w, width.toFloat(), bottom, dotPaint)
             }
-            linePaint.alpha = (150f * magPow * (1f - abs(k) / 4.5f)).toInt()
+        }
+        // líneas de campo: arcos que salen del borde y vuelven, con chispas que corren por ellas
+        val cxE = if (e == LEFT) 0f else width.toFloat()
+        val cyE = if (e == TOP) top else bottom
+        val mid = if (vertical) (top + bottom) / 2f else width / 2f
+        for (k in -5..5) {
+            field.reset()
+            val wob = sin(tNow * 6f + k) * dp(10f) * p
+            val reach = dp(110f) + abs(k) * dp(40f) * (0.6f + 0.4f * p)
+            val spread = dp(34f) * k
+            val dir = if (e == LEFT || e == TOP) 1f else -1f
+            if (vertical) {
+                field.moveTo(cxE, mid + spread - dp(14f))
+                field.quadTo(cxE + dir * (reach + wob), mid + spread * 1.6f, cxE, mid + spread + dp(14f) + spread * 0.8f)
+            } else {
+                field.moveTo(mid + spread - dp(14f), cyE)
+                field.quadTo(mid + spread * 1.6f, cyE + dir * (reach + wob), mid + spread + dp(14f) + spread * 0.8f, cyE)
+            }
+            val fade = 1f - abs(k) / 6.5f
+            linePaint.color = 0xFFB9D8FF.toInt()
+            linePaint.strokeWidth = dp(1.2f) + dp(1.8f) * p
+            linePaint.alpha = (230f * p * fade).toInt()
             c.drawPath(field, linePaint)
+            // chispa que recorre la línea
+            val t = ((flow + k * 0.13f) % 1f + 1f) % 1f
+            val omt = 1f - t
+            val sx0: Float
+            val sy0: Float
+            if (vertical) {
+                val x0 = cxE; val y0 = mid + spread - dp(14f)
+                val x1 = cxE + dir * (reach + wob); val y1 = mid + spread * 1.6f
+                val x2 = cxE; val y2 = mid + spread + dp(14f) + spread * 0.8f
+                sx0 = omt * omt * x0 + 2f * omt * t * x1 + t * t * x2
+                sy0 = omt * omt * y0 + 2f * omt * t * y1 + t * t * y2
+            } else {
+                val x0 = mid + spread - dp(14f); val y0 = cyE
+                val x1 = mid + spread * 1.6f; val y1 = cyE + dir * (reach + wob)
+                val x2 = mid + spread + dp(14f) + spread * 0.8f; val y2 = cyE
+                sx0 = omt * omt * x0 + 2f * omt * t * x1 + t * t * x2
+                sy0 = omt * omt * y0 + 2f * omt * t * y1 + t * t * y2
+            }
+            dotPaint.color = Color.WHITE
+            dotPaint.alpha = (255f * p * fade).toInt()
+            c.drawCircle(sx0, sy0, dp(2.2f) + dp(1.6f) * p, dotPaint)
+        }
+        // onda de choque al detectar el imán
+        if (shock > 0f && shockEdge != NONE) {
+            val r = dp(40f) + (1f - shock) * dp(520f)
+            linePaint.color = Color.WHITE
+            linePaint.strokeWidth = dp(3f) * shock + dp(1f)
+            linePaint.alpha = (200f * shock).toInt()
+            val ox = when (shockEdge) { LEFT -> 0f; RIGHT -> width.toFloat(); else -> width / 2f }
+            val oy = when (shockEdge) { TOP -> top; BOTTOM -> bottom; else -> (top + bottom) / 2f }
+            c.drawCircle(ox, oy, r, linePaint)
+            linePaint.alpha = (110f * shock).toInt()
+            c.drawCircle(ox, oy, r * 0.72f, linePaint)
         }
     }
 
