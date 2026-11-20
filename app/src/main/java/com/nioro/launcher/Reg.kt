@@ -606,6 +606,9 @@ object S {
     val H_DEFAULT_PAGE = num("home.defpage", "Página principal", C_HOME, HG, 1f, 6f, 1f, "")
     val H_LAYOUT = choice("home.layout", "Organización de los iconos", C_HOME, HG, HomeLayout.NAMES, 0, "Panal, Sonrisa, Ola, Dividida... (las apps no cambian de sitio)")
     val H_SCREEN = choice("home.screen", "Modo de pantalla", C_HOME, HG, ScreenModes.NAMES, 0, "Clásico, sin cajón, mosaico, tarjetas, minimalista, zen o barra lateral")
+    val H_DOCK_MOSAIC = bool("home.dock.mosaic", "Dock en el modo Mosaico", C_HOME, HG, true)
+    val H_DOCK_CARDS = bool("home.dock.cards", "Dock en el modo Tarjetas", C_HOME, HG, true)
+    val H_DOCK_SIDE = bool("home.dock.side", "Dock en el modo Barra lateral", C_HOME, HG, true)
     private const val DG = "Puntos de página"
     val D_SHOW = bool("dots.show", "Mostrar indicador de páginas", C_HOME, DG, true)
     val D_STYLE = choice("dots.style", "Estilo", C_HOME, DG, arrayOf("Puntos", "Líneas", "Cápsula activa", "Números", "Píldora One UI"), 4)
