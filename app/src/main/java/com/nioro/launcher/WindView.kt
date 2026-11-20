@@ -112,6 +112,24 @@ class WindView(ctx: Context) : AppsView(ctx), SensorEventListener {
     /** intensidad del campo de la Tierra en reposo (µT): girar el móvil no la cambia, un imán sí */
     private var baseMag = 0f
     private var lastAttract = 0L
+    /** última vez que vibró el móvil por algo nuestro (el motor de vibración también es un imán) */
+    private var lastBuzz = 0L
+    // lecturas filtradas: un imán de verdad da un campo alto y estable; altavoces y vibración, oscilaciones
+    private var fMag = 0f
+    private var fAx = 0f
+    private var fAy = 0f
+    private var fAz = 0f
+    /** cuántas lecturas seguidas lleva el campo alto y apuntando al mismo lado */
+    private var hold = 0
+    private var holdUx = 0f
+    private var holdUy = 0f
+    private var holdUz = 0f
+    /** desde cuándo el campo está quieto con el imán "puesto" (para no quedarse enganchado) */
+    private var steadySince = 0L
+    private var steadyMag = 0f
+    private var eventCount = 0
+    private var peakRise = 0f
+    private val audio = ctx.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
     /** onda de choque al detectar el imán (1 -> 0) y destello del borde */
     private var shock = 0f
     private var shockEdge = NONE
@@ -169,7 +187,7 @@ class WindView(ctx: Context) : AppsView(ctx), SensorEventListener {
             vxC = lastX
             vyC = lastY
             vPow = 0f
-            Hx.fire(this, S.HE_LONG)
+            buzz(S.HE_LONG)
             wake()
         }
     }
@@ -346,62 +364,130 @@ class WindView(ctx: Context) : AppsView(ctx), SensorEventListener {
         if (hypot(tx, ty) > 1.4f) wake()
     }
 
+    private fun buzz(id: Int) {
+        lastBuzz = SystemClock.uptimeMillis()
+        Hx.fire(this, id)
+    }
+
+    /** umbral de subida del campo (µT) según la sensibilidad elegida */
+    private fun threshold(): Float = when (S.i(S.ZW_MAG_SENS)) {
+        0 -> 160f
+        2 -> 70f
+        else -> 105f
+    }
+
     private fun magnetic(v: FloatArray) {
         val mag = sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
-        if (baseReady < 12) {
-            // los primeros valores fijan el campo de la Tierra (unos 25-65 µT)
-            baseBx += (v[0] - baseBx) * 0.3f
-            baseBy += (v[1] - baseBy) * 0.3f
-            baseBz += (v[2] - baseBz) * 0.3f
-            baseMag += (mag - baseMag) * 0.3f
+        val now = SystemClock.uptimeMillis()
+        if (baseReady < 25) {
+            // el primer medio segundo fija el campo normal (el de la Tierra y el de las piezas del móvil)
+            val k = if (baseReady == 0) 1f else 0.15f
+            baseBx += (v[0] - baseBx) * k
+            baseBy += (v[1] - baseBy) * k
+            baseBz += (v[2] - baseBz) * k
+            baseMag += (mag - baseMag) * k
+            fMag = mag
+            fAx = 0f; fAy = 0f; fAz = 0f
             baseReady++
             return
         }
-        val ax = v[0] - baseBx
-        val ay = v[1] - baseBy
-        val az = v[2] - baseBz
-        val anomaly = sqrt(ax * ax + ay * ay + az * az)
-        // la intensidad no cambia al girar el móvil: si sube de golpe, es un imán (aunque sea débil)
-        val rise = mag - baseMag
-        val strong = clamp01((max(rise, anomaly * 0.6f) - 30f) / 220f)
-        magPow += (strong - magPow) * 0.35f
-        val now = SystemClock.uptimeMillis()
-        if (!magnet && (rise > 38f || anomaly > 95f)) {
-            magnet = true
-            magEdge = edgeOf(ax, ay)
-            shock = 1f
-            shockEdge = magEdge
-            glow = 1f
-            Hx.fire(this, S.HE_LONG)
-            attract(magEdge, 3 + (strong * 6f).toInt())
-            lastAttract = now
-        } else if (magnet && rise < 16f && anomaly < 45f) {
-            magnet = false
-        } else if (magnet) {
-            // mientras el imán sigue cerca: si se mueve a otro borde, también atrae allí; y cuanto más
-            // fuerte, más apps se van pegando
-            val e = edgeOf(ax, ay)
-            if (e != magEdge && anomaly > 60f) {
-                magEdge = e
-                shock = 1f
-                shockEdge = e
-                glow = 1f
-                attract(e, 3 + (strong * 6f).toInt())
-                lastAttract = now
-            } else if (now - lastAttract > 320L && strong > 0.25f) {
-                attract(magEdge, 1 + (strong * 2f).toInt())
-                lastAttract = now
-            }
-            glow = max(glow, strong)
-        }
+        // filtro de unas décimas de segundo: lo que oscila rápido (altavoz, vibración) se queda en nada
+        val a = 0.18f
+        fMag += (mag - fMag) * a
+        fAx += ((v[0] - baseBx) - fAx) * a
+        fAy += ((v[1] - baseBy) - fAy) * a
+        fAz += ((v[2] - baseBz) - fAz) * a
+        val anomaly = sqrt(fAx * fAx + fAy * fAy + fAz * fAz)
+        val rise = fMag - baseMag
+        // mientras suena algo o acabamos de vibrar, hace falta el doble (o no cuenta)
+        val busyAudio = try { audio.isMusicActive || audio.mode != android.media.AudioManager.MODE_NORMAL } catch (t: Throwable) { false }
+        val th = threshold() * (if (busyAudio) 2f else 1f)
+        val muted = now - lastBuzz < 450L
+        val strong = clamp01((max(rise, anomaly * 0.6f) - th * 0.6f) / 260f)
         if (!magnet) {
-            // la base sigue despacio al campo normal (girar el móvil cambia la dirección, no la intensidad)
-            baseBx += (v[0] - baseBx) * 0.02f
-            baseBy += (v[1] - baseBy) * 0.02f
-            baseBz += (v[2] - baseBz) * 0.02f
-            baseMag += (mag - baseMag) * 0.01f
+            magPow += (0f - magPow) * 0.2f
+            val over = !muted && (rise > th || anomaly > th * 1.5f)
+            if (over && anomaly > 1f) {
+                val ux = fAx / anomaly
+                val uy = fAy / anomaly
+                val uz = fAz / anomaly
+                // tiene que apuntar al mismo lado lectura tras lectura (un altavoz cambia de sentido sin parar)
+                val same = hold == 0 || ux * holdUx + uy * holdUy + uz * holdUz > 0.85f
+                if (same) {
+                    hold++
+                    holdUx = ux; holdUy = uy; holdUz = uz
+                } else hold = 0
+            } else hold = 0
+            if (hold >= 8) {
+                // ¡un imán de verdad! (unas 0,15 s de campo alto, estable y en la misma dirección)
+                hold = 0
+                magnet = true
+                eventCount = 0
+                peakRise = rise
+                steadySince = now
+                steadyMag = fMag
+                magEdge = edgeOf(fAx, fAy)
+                shock = 1f
+                shockEdge = magEdge
+                glow = 1f
+                magPow = max(magPow, strong)
+                buzz(S.HE_LONG)
+                attractCapped(magEdge, 3 + (strong * 4f).toInt())
+                lastAttract = now
+            } else {
+                // sin imán: la base sigue despacio al campo normal (girar el móvil cambia la dirección)
+                baseBx += (v[0] - baseBx) * 0.02f
+                baseBy += (v[1] - baseBy) * 0.02f
+                baseBz += (v[2] - baseBz) * 0.02f
+                if (abs(mag - baseMag) < th * 0.5f) baseMag += (mag - baseMag) * 0.02f
+            }
+        } else {
+            magPow += (strong - magPow) * 0.3f
+            glow = max(glow, magPow)
+            if (rise < th * 0.35f && anomaly < th * 0.5f) {
+                // el imán se fue
+                magnet = false
+            } else {
+                // si el campo se queda quieto mucho rato, es el nuevo "normal" (el móvil se apoyó en algo
+                // metálico, una funda con imán...): se toma como base y deja de atraer
+                if (abs(fMag - steadyMag) > 25f) {
+                    steadyMag = fMag
+                    steadySince = now
+                } else if (now - steadySince > 3500L) {
+                    magnet = false
+                    baseBx = v[0]; baseBy = v[1]; baseBz = v[2]
+                    baseMag = mag
+                    fAx = 0f; fAy = 0f; fAz = 0f
+                    fMag = mag
+                }
+                if (magnet) {
+                    val e = edgeOf(fAx, fAy)
+                    if (e != magEdge && anomaly > th) {
+                        // pasó a otro borde
+                        magEdge = e
+                        shock = 1f
+                        shockEdge = e
+                        glow = 1f
+                        attractCapped(e, 2 + (strong * 3f).toInt())
+                        lastAttract = now
+                    } else if (now - lastAttract > 450L && rise > peakRise * 1.2f + 20f) {
+                        // se acerca más: atrae alguna más
+                        peakRise = rise
+                        attractCapped(magEdge, 1 + (strong * 2f).toInt())
+                        lastAttract = now
+                    }
+                }
+            }
         }
         if (magnet || magPow > 0.03f) wake()
+    }
+
+    /** como mucho 10 apps por cada vez que se acerca un imán */
+    private fun attractCapped(e: Int, count: Int) {
+        val c = min(count, 10 - eventCount)
+        if (c <= 0) return
+        eventCount += c
+        attract(e, c)
     }
 
     /** el borde hacia el que apunta la alteración del campo (x a la derecha, y hacia abajo en pantalla) */
@@ -449,7 +535,7 @@ class WindView(ctx: Context) : AppsView(ctx), SensorEventListener {
             av[best] += (rnd.nextFloat() - 0.5f) * 14f
         }
         saveStuck()
-        Hx.fire(this, S.HE_DOCK)
+        buzz(S.HE_DOCK)
         wake()
     }
 
@@ -505,7 +591,7 @@ class WindView(ctx: Context) : AppsView(ctx), SensorEventListener {
             any = true
         }
         if (any) saveStuck()
-        Hx.fire(this, S.HE_PAGE)
+        buzz(S.HE_PAGE)
         wake()
     }
 
@@ -608,7 +694,7 @@ class WindView(ctx: Context) : AppsView(ctx), SensorEventListener {
                     // ¡clac! llega a su sitio: golpe, rebote y vibración
                     stickT[i] = 1f
                     clack[i] = 1f
-                    Hx.fire(this, S.HE_DOCK)
+                    buzz(S.HE_DOCK)
                 }
                 if (stickT[i] < 1f) stickT[i] = min(0.99f, stickT[i] + dt)
             } else {
@@ -920,6 +1006,7 @@ class WindView(ctx: Context) : AppsView(ctx), SensorEventListener {
                 // los bordes de arriba y de abajo siguen siendo del inicio (notificaciones y menú de apps)
                 if (y < areaTop() + dp(36f) || y > areaBottom() - dp(48f)) return false
                 listener?.onTouchStart()
+                lastBuzz = SystemClock.uptimeMillis()
                 vt?.recycle()
                 vt = VelocityTracker.obtain()
                 vt?.addMovement(ev)
@@ -971,7 +1058,7 @@ class WindView(ctx: Context) : AppsView(ctx), SensorEventListener {
                             }
                             if (any) {
                                 saveStuck()
-                                Hx.fire(this, S.HE_ICON)
+                                buzz(S.HE_ICON)
                             }
                         }
                         lastX = x

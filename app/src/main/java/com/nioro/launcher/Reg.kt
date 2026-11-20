@@ -632,6 +632,7 @@ object S {
     val ZW_STREAKS = bool("zw.streaks", "Estelas de viento", C_HOME, ZWG, true)
     val ZW_LABELS = bool("zw.labels", "Nombres cuando amaina", C_HOME, ZWG, true)
     val ZW_CALM = num("zw.calm", "El viento amaina tras", C_HOME, ZWG, 3f, 20f, 8f, " s")
+    val ZW_MAG_SENS = choice("zw.magsens", "Sensibilidad al imán", C_HOME, ZWG, arrayOf("Baja (solo imanes fuertes)", "Media", "Alta"), 1, "Si se activa solo (altavoces, fundas con imán), bájala")
     private const val DG = "Puntos de página"
     val D_SHOW = bool("dots.show", "Mostrar indicador de páginas", C_HOME, DG, true)
     val D_STYLE = choice("dots.style", "Estilo", C_HOME, DG, arrayOf("Puntos", "Líneas", "Cápsula activa", "Números", "Píldora One UI"), 4)
