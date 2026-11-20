@@ -559,8 +559,15 @@ class WindView(ctx: Context) : AppsView(ctx), SensorEventListener {
                 val m = size * 0.6f
                 if (py[i] < top + m) vy[i] += (top + m - py[i]) * 30f * dt
                 if (py[i] > bottom - m - dp(24f)) vy[i] -= (py[i] - (bottom - m - dp(24f))) * 30f * dt
-                if (px[i] < -m) px[i] = width + m * 0.8f
-                if (px[i] > width + m) px[i] = -m * 0.8f
+                // con viento fuerte salen por un lado y entran por el otro; al amainar, vuelven dentro
+                if (amp > 0.6f) {
+                    if (px[i] < -m) px[i] = width + m * 0.8f
+                    if (px[i] > width + m) px[i] = -m * 0.8f
+                } else {
+                    val wall = 30f * (1f - amp)
+                    if (px[i] < m) vx[i] += (m - px[i]) * wall * dt
+                    if (px[i] > width - m) vx[i] -= (px[i] - (width - m)) * wall * dt
+                }
             }
             ang[i] += av[i] * dt
         }
@@ -590,8 +597,10 @@ class WindView(ctx: Context) : AppsView(ctx), SensorEventListener {
         stepStreaks(dt)
         stepDust(dt)
         invalidate()
-        // en calma y quietas: se para el dibujo
-        val still = energy / max(1, n) < dp(3f)
+        // en calma y quietas (y todas dentro de la pantalla): se para el dibujo
+        var outside = false
+        for (i in 0 until n) if (edge[i] == NONE && (px[i] < size * 0.5f || px[i] > width - size * 0.5f)) outside = true
+        val still = energy / max(1, n) < dp(3f) && !outside
         return amp > 0.01f || !still || vPow > 0f || tornado > 0f || anyGust() || magnet
     }
 

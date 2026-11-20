@@ -1748,6 +1748,8 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
         menuActs[menuN++] = 2
         menuActs[menuN++] = 3
         menuOpen = true
+        // el dedo que lo abrió sigue apoyado: al levantarlo no debe cerrarlo
+        menuFresh = true
         menuSp.snap(0f)
         menuSp.to(1f)
         Hx.fire(this, S.HE_LONG)
@@ -1807,7 +1809,14 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
         c.restore()
     }
 
+    private var menuFresh = false
+
     private fun menuTouch(ev: MotionEvent): Boolean {
+        if (menuFresh) {
+            if (ev.actionMasked == MotionEvent.ACTION_UP || ev.actionMasked == MotionEvent.ACTION_CANCEL) menuFresh = false
+            if (ev.actionMasked != MotionEvent.ACTION_DOWN) return true
+            menuFresh = false
+        }
         val inside = menuRect.contains(ev.x, ev.y)
         val j = if (inside) ((ev.y - menuRect.top - 10f * wpU) / max(1f, menuItemH)).toInt().coerceIn(0, menuN - 1) else -1
         when (ev.actionMasked) {
