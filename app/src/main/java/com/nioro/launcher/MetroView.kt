@@ -126,7 +126,9 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
         strokeJoin = Paint.Join.ROUND
     }
     private val arrow = Path()
-    private val names = HashMap<String, String>()
+    /** nombres ya recortados, por tamaño de mosaico (sin crear textos al dibujar) */
+    private val labelNames = Array(4) { HashMap<String, String>() }
+    private val backNames = Array(4) { HashMap<String, String>() }
     private val rect = RectF()
     private val m = Matrix()
     private val src = FloatArray(8)
@@ -223,7 +225,7 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
     private fun bgMode(): Int = S.i(S.MZ_BG).coerceIn(0, 2)
     private fun windows(): Boolean = S.b(S.MZ_TRANSP) && bgMode() != 1
     private fun bgColor(): Int = if (bgMode() == 1) Color.WHITE else Color.BLACK
-    override val fadeColor: Int get() = when (bgMode()) { 0 -> Color.BLACK; 1 -> Color.WHITE; else -> 0 }
+    override val fadeColor: Int get() = if (windows()) Color.BLACK else when (bgMode()) { 0 -> Color.BLACK; 1 -> Color.WHITE; else -> 0 }
 
     private fun accentOf(e: AppEntry): Int {
         val a = S.i(S.MZ_ACCENT)
@@ -287,7 +289,12 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
             }
         }
         if (changed) save()
-        names.clear()
+        clearNames()
+    }
+
+    private fun clearNames() {
+        for (mm in labelNames) mm.clear()
+        for (mm in backNames) mm.clear()
     }
 
     private fun save() {
@@ -316,7 +323,7 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
         if (scroll.value > scroll.max) scroll.jump(scroll.max)
         for (i in items.indices) target(i, !laidOut)
         laidOut = items.isNotEmpty()
-        names.clear()
+        clearNames()
         applyBars()
         if (iconMode != S.i(S.MZ_ICONS)) {
             iconMode = S.i(S.MZ_ICONS)
@@ -488,7 +495,7 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
     private fun scheduleFlip() {
         uiHandler.removeCallbacks(flipRun)
         if (!visibleNow || !S.b(S.MZ_LIVE) || S.b(S.P_REDUCE)) return
-        uiHandler.postDelayed(flipRun, 2600L + rnd.nextInt(3600))
+        uiHandler.postDelayed(flipRun, 5000L + rnd.nextInt(6000))
     }
 
     /** elige al azar un mosaico visible (mediano, ancho o grande) y lo hace girar */
@@ -615,10 +622,10 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
 
     // ================================================================ Dibujo
     override fun drawUnder(c: Canvas) {
-        val mode = bgMode()
-        if (mode == 2) return
+        val win = windows()
+        if (bgMode() == 2 && !win) return
         tileP.shader = null
-        tileP.color = bgColor()
+        tileP.color = if (win) Color.BLACK else bgColor()
         tileP.alpha = 255
         val w = width.toFloat()
         // fuera de la zona de los mosaicos (barra de estado y, sin dock, la parte de abajo)
@@ -865,7 +872,7 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
             // reverso: el nombre grande arriba a la izquierda y el icono pequeño abajo a la derecha
             bigP.textSize = min(h * 0.16f, dp(26f))
             bigP.alpha = al
-            val n = names.getOrPut(e.key + "#b" + s) {
+            val n = backNames[s].getOrPut(e.key) {
                 TextUtils.ellipsize(e.label, bigP, w - pad * 2f, TextUtils.TruncateAt.END).toString()
             }
             c.drawText(n, l + pad, t + pad - bigP.ascent(), bigP)
@@ -900,7 +907,7 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
         }
         if (showLabel) {
             labelP.alpha = al
-            val n = names.getOrPut(e.key + "#l" + s) {
+            val n = labelNames[s].getOrPut(e.key) {
                 TextUtils.ellipsize(e.label, labelP, w - pad * 2f, TextUtils.TruncateAt.END).toString()
             }
             c.drawText(n, l + pad, b - pad * 0.95f, labelP)
@@ -1034,7 +1041,7 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
         pack()
         refreshBounds()
         for (i in items.indices) target(i, false)
-        names.clear()
+        clearNames()
         save()
         Hx.fire(this, S.HE_SETTING)
         ticker.kick()
