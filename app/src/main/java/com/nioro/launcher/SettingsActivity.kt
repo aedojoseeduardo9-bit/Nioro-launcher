@@ -726,6 +726,12 @@ class SettingsActivity : Activity() {
             })
         }
         k.addView(desc)
+        // ajustes propios del Mosaico (estilo Windows Phone)
+        val mzSec = Menus.forMenu(PAGE_HOME).firstOrNull { it.title == S.MZG }
+        if (mzSec != null) {
+            divider(k, 0f)
+            advRow(k, Glyphs.GRID, 0xFF1BA1E2.toInt(), "Ajustes del Mosaico", "Colores, fondo, columnas, mosaicos vivos y animaciones") { push(buildSection(mzSec)) }
+        }
         // en los modos que ya muestran todas las apps, el dock se puede quitar
         divider(k, 0f)
         val docks = arrayOf(

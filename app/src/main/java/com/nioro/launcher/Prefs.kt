@@ -123,6 +123,20 @@ object Prefs {
     var homeBackupSaved by BoolPref("homeBackupSaved", false)
     fun homeBackup(): MutableList<String> = getList("homeBackup")
     fun setHomeBackup(v: List<String>) = putList("homeBackup", v)
+    /** Mosaico (Windows Phone): orden de los mosaicos y tamaño de cada uno (0 pequeño .. 3 grande) */
+    fun metroOrder(): MutableList<String> = getList("metroOrder")
+    fun setMetroOrder(v: List<String>) = putList("metroOrder", v)
+    fun metroSizes(): HashMap<String, Int> {
+        val out = HashMap<String, Int>()
+        for (line in getList("metroSizes")) {
+            val i = line.lastIndexOf('=')
+            if (i <= 0) continue
+            val n = line.substring(i + 1).toIntOrNull() ?: continue
+            out[line.substring(0, i)] = n
+        }
+        return out
+    }
+    fun setMetroSizes(m: Map<String, Int>) = putList("metroSizes", m.map { it.key + "=" + it.value })
     fun hidden(): MutableList<String> = getList("hidden")
     fun setHidden(v: List<String>) = putList("hidden", v)
     fun knownKeys(): MutableList<String> = getList("knownKeys")

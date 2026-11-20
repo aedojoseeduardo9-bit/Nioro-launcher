@@ -21,6 +21,7 @@ import kotlin.math.roundToInt
 
 /**
  * Base de los diseños propios de la pantalla de inicio (Mosaico, Tarjetas, Barra lateral y Minimalista).
+ * El Mosaico (estilo Windows Phone) está en MetroView.kt.
  * No son las vistas del cajón de apps: cada una tiene su dibujo y su forma de moverse.
  * Aquí está lo que comparten: tocar para abrir, mantener para el menú y desplazar con inercia.
  */
@@ -68,13 +69,31 @@ abstract class HomeModeView(ctx: Context) : AppsView(ctx) {
 
     /** ¿se desvanecen siempre los dos bordes? (Tarjetas: las vecinas asoman por los lados) */
     protected open val fadeAlways = false
+    /** color del degradado de los bordes: 0 = se borra el contenido (se ve el fondo de pantalla) */
+    protected open val fadeColor: Int = 0
+    private val tintP = Paint(Paint.ANTI_ALIAS_FLAG)
+    private var tA: LinearGradient? = null
+    private var tB: LinearGradient? = null
+
+    /** lo que va debajo de todo y fuera de la zona de la vista (p. ej. el fondo negro del Mosaico) */
+    protected open fun drawUnder(c: Canvas) {}
 
     private fun gradients(top: Float, bottom: Float) {
-        val key = "$top|$bottom|$width|$horizontal"
+        val fc = fadeColor
+        val key = "$top|$bottom|$width|$horizontal|$fc"
         if (key == gKey) return
         gKey = key
         val f = fadeLen
         val opaque = 0xFF000000.toInt()
+        val clear = fc and 0x00FFFFFF
+        if (horizontal) {
+            val w = width.toFloat()
+            tA = LinearGradient(0f, 0f, f, 0f, fc, clear, Shader.TileMode.CLAMP)
+            tB = LinearGradient(w - f, 0f, w, 0f, clear, fc, Shader.TileMode.CLAMP)
+        } else {
+            tA = LinearGradient(0f, top, 0f, top + f, fc, clear, Shader.TileMode.CLAMP)
+            tB = LinearGradient(0f, bottom - f, 0f, bottom, clear, fc, Shader.TileMode.CLAMP)
+        }
         if (horizontal) {
             val w = width.toFloat()
             gA = LinearGradient(0f, 0f, f, 0f, opaque, 0, Shader.TileMode.CLAMP)
@@ -86,27 +105,31 @@ abstract class HomeModeView(ctx: Context) : AppsView(ctx) {
     }
 
     override fun draw(c: Canvas) {
+        if (embedded) drawUnder(c)
         val top = insetTop
         val bottom = height - insetBottom
         if (!embedded || bottom - top < fadeLen * 2f || width <= 0) return super.draw(c)
         gradients(top, bottom)
-        val save = c.saveLayer(0f, top, width.toFloat(), bottom, null)
+        val fc = fadeColor
+        // con un fondo de color liso basta pintar el degradado encima (más barato que borrar en una capa)
+        val save = if (fc == 0) c.saveLayer(0f, top, width.toFloat(), bottom, null) else -1
         super.draw(c)
         val f = fadeLen
         // cuánto se desvanece cada borde (aparece poco a poco al empezar a desplazar)
         val ka = if (fadeAlways) 1f else clamp01((scroll.value - scroll.min) / f)
         val kb = if (fadeAlways) 1f else clamp01((scroll.max - scroll.value) / f)
+        val p = if (fc == 0) fadeP else tintP
         if (ka > 0.01f) {
-            fadeP.shader = gA
-            fadeP.alpha = (255f * ka).toInt()
-            if (horizontal) c.drawRect(0f, top, f, bottom, fadeP) else c.drawRect(0f, top, width.toFloat(), top + f, fadeP)
+            p.shader = if (fc == 0) gA else tA
+            p.alpha = (255f * ka).toInt()
+            if (horizontal) c.drawRect(0f, top, f, bottom, p) else c.drawRect(0f, top, width.toFloat(), top + f, p)
         }
         if (kb > 0.01f) {
-            fadeP.shader = gB
-            fadeP.alpha = (255f * kb).toInt()
-            if (horizontal) c.drawRect(width - f, top, width.toFloat(), bottom, fadeP) else c.drawRect(0f, bottom - f, width.toFloat(), bottom, fadeP)
+            p.shader = if (fc == 0) gB else tB
+            p.alpha = (255f * kb).toInt()
+            if (horizontal) c.drawRect(width - f, top, width.toFloat(), bottom, p) else c.drawRect(0f, bottom - f, width.toFloat(), bottom, p)
         }
-        c.restoreToCount(save)
+        if (save >= 0) c.restoreToCount(save)
     }
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
@@ -210,124 +233,6 @@ abstract class HomeModeView(ctx: Context) : AppsView(ctx) {
             }
         }
         return true
-    }
-}
-
-/**
- * Mosaico: baldosas de cristal de dos tamaños, como un muro de azulejos. Cada grupo de cinco apps
- * forma un bloque: una baldosa grande y cuatro pequeñas, y el siguiente bloque va al revés.
- * Se desplaza hacia arriba y abajo.
- */
-class MosaicView(ctx: Context) : HomeModeView(ctx) {
-    private val tiles = ArrayList<RectF>()
-    private val tileP = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val edgeP = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
-    private val nameP = TextPaint(Paint.ANTI_ALIAS_FLAG)
-    private val names = HashMap<String, String>()
-    private val tmp = RectF()
-    private var cell = 0f
-    private var gap = 0f
-    private var top0 = 0f
-
-    init {
-        nameP.color = Color.WHITE
-        nameP.typeface = Typeface.create(Typeface.DEFAULT, 600, false)
-        nameP.setShadowLayer(dp(3f), 0f, dp(1f), 0x88000000.toInt())
-        edgeP.strokeWidth = dp(1f)
-    }
-
-    override fun relayout() {
-        val w = width.toFloat()
-        val h = height.toFloat()
-        if (w <= 0f || h <= 0f) return
-        val side = dp(16f)
-        gap = dp(10f)
-        cell = (w - side * 2f - gap * 3f) / 4f
-        top0 = insetTop + dp(8f)
-        tiles.clear()
-        names.clear()
-        var y = top0
-        var k = 0
-        var block = 0
-        while (k < shown.size) {
-            val bigLeft = block % 2 == 0
-            val bigX = if (bigLeft) side else side + (cell + gap) * 2f
-            val smallX = if (bigLeft) side + (cell + gap) * 2f else side
-            tiles.add(RectF(bigX, y, bigX + cell * 2f + gap, y + cell * 2f + gap))
-            k++
-            for (s in 0 until 4) {
-                if (k >= shown.size) break
-                val sx = smallX + (s % 2) * (cell + gap)
-                val sy = y + (s / 2) * (cell + gap)
-                tiles.add(RectF(sx, sy, sx + cell, sy + cell))
-                k++
-            }
-            y += cell * 2f + gap * 2f
-            block++
-        }
-        val viewH = h - insetBottom - top0
-        scroll.dim = viewH
-        scroll.min = 0f
-        scroll.max = max(0f, y - top0 - viewH + dp(12f))
-        if (scroll.value > scroll.max) scroll.jump(scroll.max)
-    }
-
-    override fun hit(x: Float, y: Float): Int {
-        val yy = y + scroll.value
-        for (i in tiles.indices) {
-            val r = tiles[i]
-            if (x >= r.left && x <= r.right && yy >= r.top && yy <= r.bottom) return if (i < shown.size) i else -1
-        }
-        return -1
-    }
-
-    override fun itemRect(i: Int): RectF {
-        val r = tiles.getOrNull(i) ?: return RectF()
-        return RectF(r.left, r.top - scroll.value, r.right, r.bottom - scroll.value)
-    }
-
-    override fun onDraw(c: Canvas) {
-        val off = scroll.value
-        val top = insetTop
-        val bottom = height - insetBottom
-        for (i in tiles.indices) {
-            if (i >= shown.size) break
-            val r = tiles[i]
-            val t = r.top - off
-            val b = r.bottom - off
-            if (b < top || t > bottom) continue
-            val e = shown[i]
-            val q = enter(i)
-            if (q <= 0.01f) continue
-            val big = r.width() > cell * 1.5f
-            val pressed = i == downIdx
-            val s = (if (pressed) pressSp.value else 1f) * (0.9f + 0.1f * q)
-            tmp.set(r.left, t, r.right, b)
-            c.save()
-            c.scale(s, s, tmp.centerX(), tmp.centerY())
-            c.translate(0f, (1f - q) * dp(26f))
-            val rad = if (big) dp(30f) else dp(22f)
-            // baldosa teñida con el color del icono
-            tileP.color = blend(e.tint, 0xFF0B1026.toInt(), 0.45f)
-            tileP.alpha = (200f * q).toInt()
-            c.drawRoundRect(tmp, rad, rad, tileP)
-            edgeP.color = 0x40FFFFFF
-            edgeP.alpha = (90f * q).toInt()
-            c.drawRoundRect(tmp, rad, rad, edgeP)
-            val icon = if (big) cell * 0.95f else cell * 0.58f
-            val iy = if (big) tmp.centerY() - dp(12f) else tmp.centerY() - (if (Prefs.labels) dp(7f) else 0f)
-            drawIcon(c, e, tmp.centerX(), iy, icon, q)
-            if (Prefs.labels) {
-                nameP.textSize = if (big) dp(15f) else dp(10.5f)
-                nameP.textAlign = Paint.Align.CENTER
-                nameP.alpha = (255f * q).toInt()
-                val maxW = tmp.width() - dp(14f)
-                val key = e.key + if (big) "B" else "s"
-                val n = names.getOrPut(key) { TextUtils.ellipsize(e.label, nameP, maxW, TextUtils.TruncateAt.END).toString() }
-                c.drawText(n, tmp.centerX(), tmp.bottom - (if (big) dp(18f) else dp(9f)), nameP)
-            }
-            c.restore()
-        }
     }
 }
 
