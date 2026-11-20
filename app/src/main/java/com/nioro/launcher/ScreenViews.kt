@@ -3,8 +3,12 @@ package com.nioro.launcher
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
 import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
 import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.text.TextPaint
 import android.text.TextUtils
@@ -16,7 +20,7 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
- * Base de los diseños propios de la pantalla de inicio (Mosaico, Tarjetas y Barra lateral).
+ * Base de los diseños propios de la pantalla de inicio (Mosaico, Tarjetas, Barra lateral y Minimalista).
  * No son las vistas del cajón de apps: cada una tiene su dibujo y su forma de moverse.
  * Aquí está lo que comparten: tocar para abrir, mantener para el menú y desplazar con inercia.
  */
@@ -50,6 +54,60 @@ abstract class HomeModeView(ctx: Context) : AppsView(ctx) {
     protected open fun takesEmpty(x: Float, y: Float): Boolean = true
     /** al soltar: por defecto inercia libre */
     protected open fun released(vel: Float) = scroll.release(vel)
+
+    // ---------------------------------------------------------------- Bordes con degradado
+    /**
+     * Las apps no se cortan de golpe contra el reloj o el dock: en cada borde se desvanecen con un
+     * degradado. Solo aparece en el lado donde hay más contenido (arriba, si ya se bajó; abajo, si queda).
+     */
+    private val fadeP = Paint(Paint.ANTI_ALIAS_FLAG).apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT) }
+    private val fadeLen get() = dp(34f)
+    private var gA: LinearGradient? = null
+    private var gB: LinearGradient? = null
+    private var gKey = ""
+
+    /** ¿se desvanecen siempre los dos bordes? (Tarjetas: las vecinas asoman por los lados) */
+    protected open val fadeAlways = false
+
+    private fun gradients(top: Float, bottom: Float) {
+        val key = "$top|$bottom|$width|$horizontal"
+        if (key == gKey) return
+        gKey = key
+        val f = fadeLen
+        val opaque = 0xFF000000.toInt()
+        if (horizontal) {
+            val w = width.toFloat()
+            gA = LinearGradient(0f, 0f, f, 0f, opaque, 0, Shader.TileMode.CLAMP)
+            gB = LinearGradient(w - f, 0f, w, 0f, 0, opaque, Shader.TileMode.CLAMP)
+        } else {
+            gA = LinearGradient(0f, top, 0f, top + f, opaque, 0, Shader.TileMode.CLAMP)
+            gB = LinearGradient(0f, bottom - f, 0f, bottom, 0, opaque, Shader.TileMode.CLAMP)
+        }
+    }
+
+    override fun draw(c: Canvas) {
+        val top = insetTop
+        val bottom = height - insetBottom
+        if (!embedded || bottom - top < fadeLen * 2f || width <= 0) return super.draw(c)
+        gradients(top, bottom)
+        val save = c.saveLayer(0f, top, width.toFloat(), bottom, null)
+        super.draw(c)
+        val f = fadeLen
+        // cuánto se desvanece cada borde (aparece poco a poco al empezar a desplazar)
+        val ka = if (fadeAlways) 1f else clamp01((scroll.value - scroll.min) / f)
+        val kb = if (fadeAlways) 1f else clamp01((scroll.max - scroll.value) / f)
+        if (ka > 0.01f) {
+            fadeP.shader = gA
+            fadeP.alpha = (255f * ka).toInt()
+            if (horizontal) c.drawRect(0f, top, f, bottom, fadeP) else c.drawRect(0f, top, width.toFloat(), top + f, fadeP)
+        }
+        if (kb > 0.01f) {
+            fadeP.shader = gB
+            fadeP.alpha = (255f * kb).toInt()
+            if (horizontal) c.drawRect(width - f, top, width.toFloat(), bottom, fadeP) else c.drawRect(0f, bottom - f, width.toFloat(), bottom, fadeP)
+        }
+        c.restoreToCount(save)
+    }
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
         super.onSizeChanged(w, h, ow, oh)
@@ -279,6 +337,7 @@ class MosaicView(ctx: Context) : HomeModeView(ctx) {
  */
 class CardsView(ctx: Context) : HomeModeView(ctx) {
     override val horizontal = true
+    override val fadeAlways = true
     private val cardP = Paint(Paint.ANTI_ALIAS_FLAG)
     private val shineP = Paint(Paint.ANTI_ALIAS_FLAG)
     private val nameP = TextPaint(Paint.ANTI_ALIAS_FLAG)
@@ -517,6 +576,99 @@ class SideBarView(ctx: Context) : HomeModeView(ctx) {
                 nameP.alpha = (255f * q).toInt()
                 c.drawText(n, right, y - (nameP.descent() + nameP.ascent()) / 2f, nameP)
             }
+        }
+    }
+}
+
+/**
+ * Minimalista: todas tus apps como una lista de texto grande, sin iconos ni dock. Se desplaza arriba y
+ * abajo; no hay menú de apps porque esta lista ya lo es.
+ */
+class MinimalListView(ctx: Context) : HomeModeView(ctx) {
+    private val nameP = TextPaint(Paint.ANTI_ALIAS_FLAG)
+    private val letterP = TextPaint(Paint.ANTI_ALIAS_FLAG)
+    private val names = HashMap<String, String>()
+    private var rowH = 0f
+    private var x0 = 0f
+    private var top0 = 0f
+
+    init {
+        nameP.color = Color.WHITE
+        nameP.typeface = Typeface.create(Typeface.DEFAULT, 300, false)
+        nameP.setShadowLayer(dp(6f), 0f, dp(1.5f), 0x66000000)
+        letterP.color = 0x80FFFFFF.toInt()
+        letterP.typeface = Typeface.create(Typeface.DEFAULT, 600, false)
+        letterP.textSize = dp(12f)
+    }
+
+    override fun relayout() {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        if (w <= 0f || h <= 0f) return
+        rowH = dp(54f)
+        nameP.textSize = dp(25f)
+        x0 = dp(30f)
+        top0 = insetTop + dp(8f)
+        names.clear()
+        val viewH = h - insetBottom - top0
+        scroll.dim = viewH
+        scroll.min = 0f
+        scroll.max = max(0f, shown.size * rowH - viewH + dp(16f))
+        if (scroll.value > scroll.max) scroll.jump(scroll.max)
+    }
+
+    /** el borde derecho queda libre para que el inicio siga respondiendo ahí */
+    override fun takesEmpty(x: Float, y: Float): Boolean = x < width * 0.82f
+
+    private fun rowTop(i: Int): Float = top0 + i * rowH - scroll.value
+
+    private fun nameOf(e: AppEntry): String = names.getOrPut(e.key) {
+        TextUtils.ellipsize(e.label, nameP, width - x0 * 2f, TextUtils.TruncateAt.END).toString()
+    }
+
+    override fun hit(x: Float, y: Float): Int {
+        if (rowH <= 0f) return -1
+        val i = ((y - top0 + scroll.value) / rowH).toInt()
+        if (i !in shown.indices || y < top0 - scroll.value) return -1
+        return if (x >= x0 - dp(16f) && x <= x0 + nameP.measureText(nameOf(shown[i])) + dp(24f)) i else -1
+    }
+
+    override fun itemRect(i: Int): RectF {
+        val t = rowTop(i)
+        val w = if (i in shown.indices) nameP.measureText(nameOf(shown[i])) else dp(80f)
+        return RectF(x0 - dp(10f), t + dp(4f), x0 + w + dp(10f), t + rowH - dp(4f))
+    }
+
+    override fun onDraw(c: Canvas) {
+        val top = insetTop
+        val bottom = height - insetBottom
+        val first = ((scroll.value) / max(1f, rowH)).toInt()
+        var lastLetter = ' '
+        for (i in shown.indices) {
+            val t = rowTop(i)
+            if (t + rowH < top || t > bottom) {
+                lastLetter = shown[i].label.firstOrNull()?.uppercaseChar() ?: ' '
+                continue
+            }
+            val e = shown[i]
+            val q = enter(i - first)
+            if (q <= 0.01f) continue
+            val ox = (1f - q) * -dp(36f)
+            val pk = i == downIdx
+            val sc = if (pk) pressSp.value else 1f
+            val cy = t + rowH / 2f
+            // la letra inicial al margen, solo cuando cambia (ayuda a orientarse en listas largas)
+            val letter = e.label.firstOrNull()?.uppercaseChar() ?: ' '
+            if (letter != lastLetter) {
+                letterP.alpha = (130f * q).toInt()
+                c.drawText(letter.toString(), dp(10f), cy - (letterP.descent() + letterP.ascent()) / 2f, letterP)
+                lastLetter = letter
+            }
+            nameP.alpha = (255f * q * (if (pk) 0.7f else 1f)).toInt().coerceIn(0, 255)
+            c.save()
+            c.scale(sc, sc, x0, cy)
+            c.drawText(nameOf(e), x0 + ox, cy - (nameP.descent() + nameP.ascent()) / 2f, nameP)
+            c.restore()
         }
     }
 }

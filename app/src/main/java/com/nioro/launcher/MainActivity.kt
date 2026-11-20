@@ -443,7 +443,7 @@ class MainActivity : Activity() {
         when (a) {
             S.A_DRAWER -> {
                 menu.dismiss()
-                // modo "Sin cajón": no hay menú de apps, todas están en el inicio
+                // sin menú de apps en "Sin cajón" ni en los modos que ya muestran todas las apps
                 if (!noDrawer()) drawer.open(home.launchpadX())
             }
             S.A_NOTIF -> homeHost.expandShade()
@@ -672,8 +672,8 @@ class MainActivity : Activity() {
      * Aplica el modo de pantalla elegido. "Sin cajón" pone todas las apps en el inicio y guarda antes
      * una copia del inicio, que vuelve al cambiar a otro modo (así no queda un inicio abarrotado).
      */
-    /** modo "Sin cajón": el menú de apps no existe */
-    private fun noDrawer(): Boolean = ScreenModes.mode() == ScreenModes.NO_DRAWER
+    /** sin menú de apps: "Sin cajón" y los modos cuyo inicio ya muestra todas las apps */
+    private fun noDrawer(): Boolean = ScreenModes.drawerOff()
 
     private fun syncScreenMode() {
         val m = ScreenModes.mode()

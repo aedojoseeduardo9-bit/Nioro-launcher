@@ -39,18 +39,28 @@ object ScreenModes {
     val DESC = arrayOf(
         "Páginas de iconos y dock. Desliza hacia arriba para ver todas las apps.",
         "Sin menú de apps: todas tus apps viven en las páginas del inicio, como en el iPhone. Deslizar hacia arriba no abre nada. Si vuelves a otro modo, tu inicio queda como estaba.",
-        "Todas tus apps en baldosas de cristal de dos tamaños, como un muro de azulejos. Desliza arriba y abajo.",
-        "Una app por tarjeta grande: pásalas a los lados con el dedo y toca la del centro para abrirla.",
-        "Solo el reloj y una lista de texto con tus apps favoritas (las del dock y el inicio). Sin iconos ni dock.",
+        "Todas tus apps en baldosas de cristal de dos tamaños, como un muro de azulejos. Desliza arriba y abajo. Sin menú de apps: el inicio ya lo es.",
+        "Una app por tarjeta grande: pásalas a los lados con el dedo y toca la del centro para abrirla. Sin menú de apps: el inicio ya lo es.",
+        "Solo el reloj y todas tus apps en una lista de texto grande que se desplaza. Sin iconos, sin dock y sin menú de apps.",
         "Pantalla limpia: solo el reloj y el dock. Desliza hacia arriba para ver tus apps.",
-        "Una columna de iconos en el borde derecho, a mano del pulgar, con su nombre al lado. El resto queda libre para el reloj."
+        "Una columna con todas tus apps en el borde derecho, a mano del pulgar, con su nombre al lado. Sin menú de apps: el inicio ya lo es."
     )
 
     fun mode(): Int = S.i(S.H_SCREEN).coerceIn(0, NAMES.size - 1)
     /** sin páginas de iconos en el inicio */
     fun pagesOff(m: Int = mode()): Boolean = m >= MOSAIC
-    /** sin dock */
-    fun dockOff(m: Int = mode()): Boolean = m == MINIMAL
+    /** sin dock: Minimalista nunca lo tiene; Mosaico, Tarjetas y Barra lateral, si se desactiva */
+    fun dockOff(m: Int = mode()): Boolean = when (m) {
+        MINIMAL -> true
+        MOSAIC -> !S.b(S.H_DOCK_MOSAIC)
+        CARDS -> !S.b(S.H_DOCK_CARDS)
+        SIDEBAR -> !S.b(S.H_DOCK_SIDE)
+        else -> false
+    }
+    /** ¿se puede quitar el dock en este modo? */
+    fun dockOptional(m: Int): Boolean = m == MOSAIC || m == CARDS || m == SIDEBAR
+    /** sin menú de apps: "Sin cajón" y los modos cuyo inicio ya muestra todas las apps */
+    fun drawerOff(m: Int = mode()): Boolean = m == NO_DRAWER || embedded(m)
     /** el centro del inicio lo ocupa una vista de apps (ScreenHost) */
     fun embedded(m: Int): Boolean = m == MOSAIC || m == CARDS || m == MINIMAL || m == SIDEBAR
 }
@@ -91,7 +101,7 @@ class ScreenHost(ctx: Context) : FrameLayout(ctx) {
                     ScreenModes.MOSAIC -> MosaicView(context)
                     ScreenModes.CARDS -> CardsView(context)
                     ScreenModes.SIDEBAR -> SideBarView(context)
-                    else -> MinimalView(context)
+                    else -> MinimalListView(context)
                 }
                 v.embedded = true
                 v.progress = 1f
@@ -194,186 +204,6 @@ class ScreenHost(ctx: Context) : FrameLayout(ctx) {
     override fun onDetachedFromWindow() {
         ticker.stop()
         super.onDetachedFromWindow()
-    }
-}
-
-/**
- * Modo Minimalista: tus apps favoritas como una lista de texto grande, sin iconos. Los toques que no
- * caen sobre un nombre siguen al inicio (deslizar hacia arriba abre las apps, hacia abajo las notificaciones).
- */
-class MinimalView(ctx: Context) : AppsView(ctx) {
-    override val iconArea: Int = S.IA_HOME
-    private val fav = ArrayList<AppEntry>()
-    private val names = ArrayList<String>()
-    private val name = TextPaint(Paint.ANTI_ALIAS_FLAG)
-    private val hint = TextPaint(Paint.ANTI_ALIAS_FLAG)
-    private val rowY = FloatArray(MAX)
-    private val rowW = FloatArray(MAX)
-    private var rowH = 0f
-    private var x0 = 0f
-    private var shownN = 0
-    private var downIdx = -1
-    private var downX = 0f
-    private var downY = 0f
-    private var longFired = false
-    private val longRun = Runnable {
-        val i = downIdx
-        if (i in 0 until shownN) {
-            longFired = true
-            lift()
-            listener?.onMenu(fav[i], rowRect(i))
-        }
-    }
-
-    init {
-        name.color = Color.WHITE
-        name.typeface = Typeface.create(Typeface.DEFAULT, 300, false)
-        name.setShadowLayer(dp(6f), 0f, dp(1.5f), 0x66000000)
-        hint.color = 0x99FFFFFF.toInt()
-        hint.textSize = dp(12.5f)
-        hint.typeface = Typeface.create(Typeface.DEFAULT, 500, false)
-        hint.setShadowLayer(dp(3f), 0f, dp(1f), 0x66000000)
-    }
-
-    override fun setData(list: List<AppEntry>, all: List<AppEntry>) {
-        super.setData(list, all)
-        fav.clear()
-        val seen = HashSet<String>()
-        // las favoritas: primero las del dock y luego las del inicio, en su orden
-        for (k in Prefs.dockKeys() + Prefs.homeKeys()) {
-            if (k == HomeSlots.BLANK || !seen.add(k)) continue
-            val e = AppRepo.get(k) ?: continue
-            fav.add(e)
-            if (fav.size >= MAX) break
-        }
-        // si aún no hay favoritas, las primeras apps por orden alfabético
-        if (fav.isEmpty()) for (e in list) {
-            fav.add(e)
-            if (fav.size >= 7) break
-        }
-        layoutRows()
-        invalidate()
-    }
-
-    override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
-        super.onSizeChanged(w, h, ow, oh)
-        layoutRows()
-    }
-
-    override fun onImeChanged() {
-        layoutRows()
-        invalidate()
-    }
-
-    private fun layoutRows() {
-        val w = width.toFloat()
-        val h = height.toFloat()
-        if (w <= 0f || h <= 0f) return
-        val top = insetTop + dp(10f)
-        val bottom = h - insetBottom - dp(44f)
-        val avail = max(dp(60f), bottom - top)
-        // filas grandes; si no caben todas se muestran menos (nunca se encima el texto)
-        rowH = min(dp(62f), avail / max(1, fav.size)).coerceAtLeast(dp(44f))
-        shownN = min(fav.size, (avail / rowH).toInt()).coerceIn(0, MAX)
-        name.textSize = rowH * 0.5f
-        x0 = dp(30f)
-        names.clear()
-        for (i in 0 until shownN) {
-            val s = TextUtils.ellipsize(fav[i].label, name, w - x0 * 2f, TextUtils.TruncateAt.END).toString()
-            names.add(s)
-            rowY[i] = top + i * rowH
-            rowW[i] = name.measureText(s)
-        }
-    }
-
-    private fun rowRect(i: Int): RectF =
-        RectF(x0 - dp(10f), rowY[i] + dp(4f), x0 + rowW[i] + dp(10f), rowY[i] + rowH - dp(4f))
-
-    private fun rowAt(x: Float, y: Float): Int {
-        for (i in 0 until shownN) {
-            if (y >= rowY[i] && y < rowY[i] + rowH && x >= x0 - dp(16f) && x <= x0 + rowW[i] + dp(24f)) return i
-        }
-        return -1
-    }
-
-    private fun ease(t: Float): Float {
-        val k = 1f - clamp01(t)
-        return 1f - k * k * k
-    }
-
-    override fun onFrame(dt: Float): Boolean {
-        invalidate()
-        return false
-    }
-
-    override fun onDraw(c: Canvas) {
-        val p = progress
-        for (i in 0 until shownN) {
-            // entran una tras otra deslizándose desde la izquierda
-            val q = ease(p * 1.5f - i * 0.07f)
-            if (q <= 0.001f) continue
-            val ox = (1f - q) * -dp(36f)
-            val pk = i == downIdx
-            val s = if (pk) pressSp.value else 1f
-            val cy = rowY[i] + rowH / 2f
-            name.alpha = (255f * q * (if (pk) 0.75f else 1f)).toInt().coerceIn(0, 255)
-            c.save()
-            c.scale(s, s, x0, cy)
-            c.drawText(names[i], x0 + ox, cy - (name.descent() + name.ascent()) / 2f, name)
-            c.restore()
-        }
-        if (shownN > 0) {
-            hint.alpha = (150f * clamp01(p * 1.2f - 0.4f)).toInt()
-            val y = rowY[shownN - 1] + rowH + dp(22f)
-            if (y < height - insetBottom - dp(8f)) c.drawText("Desliza hacia arriba para ver todas", x0, y, hint)
-        }
-    }
-
-    override fun onTouchEvent(ev: MotionEvent): Boolean {
-        val x = ev.x
-        val y = ev.y
-        when (ev.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                val i = rowAt(x, y)
-                // fuera de los nombres el toque sigue al inicio
-                if (i < 0) return false
-                listener?.onTouchStart()
-                downIdx = i
-                downX = x
-                downY = y
-                longFired = false
-                press(fav[i])
-                uiHandler.removeCallbacks(longRun)
-                uiHandler.postDelayed(longRun, longMs)
-                return true
-            }
-            MotionEvent.ACTION_MOVE -> {
-                if (downIdx >= 0 && (abs(x - downX) > slop || abs(y - downY) > slop)) {
-                    uiHandler.removeCallbacks(longRun)
-                    if (!longFired) {
-                        downIdx = -1
-                        unpress()
-                    }
-                }
-                return true
-            }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                uiHandler.removeCallbacks(longRun)
-                val i = downIdx
-                downIdx = -1
-                unpress()
-                if (ev.actionMasked == MotionEvent.ACTION_UP && !longFired && i in 0 until shownN) {
-                    listener?.onLaunch(fav[i], rowRect(i))
-                }
-                invalidate()
-                return true
-            }
-        }
-        return true
-    }
-
-    companion object {
-        private const val MAX = 12
     }
 }
 

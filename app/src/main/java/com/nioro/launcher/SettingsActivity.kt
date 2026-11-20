@@ -726,6 +726,19 @@ class SettingsActivity : Activity() {
             })
         }
         k.addView(desc)
+        // en los modos que ya muestran todas las apps, el dock se puede quitar
+        divider(k, 0f)
+        val docks = arrayOf(
+            Triple("Dock en Mosaico", S.H_DOCK_MOSAIC, ScreenModes.MOSAIC),
+            Triple("Dock en Tarjetas", S.H_DOCK_CARDS, ScreenModes.CARDS),
+            Triple("Dock en Barra lateral", S.H_DOCK_SIDE, ScreenModes.SIDEBAR)
+        )
+        for ((title, id, m) in docks) {
+            toggle(k, title, "Apágalo para que " + ScreenModes.NAMES[m] + " ocupe toda la pantalla", S.b(id)) {
+                S.set(id, if (it) 1f else 0f)
+                for (x in thumbs) if (x.idx == m) x.invalidate()
+            }
+        }
     }
 
     /** efectos animados de color con una zona de prueba en vivo (se puede tocar) */
