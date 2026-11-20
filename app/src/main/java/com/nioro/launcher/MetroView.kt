@@ -570,11 +570,9 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
         if (iconMode == 2) return null
         if (metro.containsKey(e.key)) return metro[e.key]
         if (loading.add(e.key)) {
-            var ex = iconExec
-            if (ex == null || ex.isShutdown) {
-                ex = Executors.newSingleThreadExecutor()
-                iconExec = ex
-            }
+            val cur = iconExec
+            val ex: ExecutorService = if (cur == null || cur.isShutdown) Executors.newSingleThreadExecutor() else cur
+            iconExec = ex
             val app = context.applicationContext
             val mode = iconMode
             val k = e.key
