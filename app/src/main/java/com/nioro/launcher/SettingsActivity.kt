@@ -732,12 +732,18 @@ class SettingsActivity : Activity() {
             divider(k, 0f)
             advRow(k, Glyphs.GRID, 0xFF1BA1E2.toInt(), "Ajustes del Mosaico", "Colores, fondo, columnas, mosaicos vivos y animaciones") { push(buildSection(mzSec)) }
         }
+        val zwSec = Menus.forMenu(PAGE_HOME).firstOrNull { it.title == S.ZWG }
+        if (zwSec != null) {
+            divider(k, 0f)
+            advRow(k, Glyphs.MOTION, 0xFF7DD3FC.toInt(), "Ajustes del Zen", "Viento, inclinación, torbellino e imanes") { push(buildSection(zwSec)) }
+        }
         // en los modos que ya muestran todas las apps, el dock se puede quitar
         divider(k, 0f)
         val docks = arrayOf(
             Triple("Dock en Mosaico", S.H_DOCK_MOSAIC, ScreenModes.MOSAIC),
             Triple("Dock en Tarjetas", S.H_DOCK_CARDS, ScreenModes.CARDS),
-            Triple("Dock en Barra lateral", S.H_DOCK_SIDE, ScreenModes.SIDEBAR)
+            Triple("Dock en Barra lateral", S.H_DOCK_SIDE, ScreenModes.SIDEBAR),
+            Triple("Dock en Zen", S.H_DOCK_ZEN, ScreenModes.ZEN)
         )
         for ((title, id, m) in docks) {
             toggle(k, title, "Apágalo para que " + ScreenModes.NAMES[m] + " ocupe toda la pantalla", S.b(id)) {

@@ -622,6 +622,16 @@ object S {
     val MZ_TILT = bool("mz.tilt", "Inclinación al tocar", C_HOME, MZG, true, "El mosaico se hunde hacia donde lo tocas")
     val MZ_TURN = bool("mz.turn", "Animación de torniquete", C_HOME, MZG, true, "Al abrir una app los mosaicos giran sobre el borde izquierdo")
     val MZ_CLOCK = bool("mz.clock", "Reloj del inicio encima", C_HOME, MZG, false, "Windows Phone no lo tiene; actívalo si lo quieres")
+    /** grupo de ajustes del modo Zen (viento) */
+    const val ZWG = "Zen (viento e imanes)"
+    val H_DOCK_ZEN = bool("home.dock.zen", "Dock en el modo Zen", C_HOME, HG, false)
+    val ZW_APPS = choice("zw.apps", "Apps en el viento", C_HOME, ZWG, arrayOf("Favoritas (dock e inicio)", "Todas"), 0)
+    val ZW_TILT = bool("zw.tilt", "Inclinar cambia el viento", C_HOME, ZWG, true, "Al inclinar el móvil el viento sopla hacia el lado que baja")
+    val ZW_SHAKE = bool("zw.shake", "Agitar levanta un torbellino", C_HOME, ZWG, true, "Lo revuelve todo y despega las apps pegadas")
+    val ZW_MAGNET = bool("zw.magnet", "Imanes", C_HOME, ZWG, true, "Acerca un imán al móvil: las apps más cercanas se pegan a ese borde")
+    val ZW_STREAKS = bool("zw.streaks", "Estelas de viento", C_HOME, ZWG, true)
+    val ZW_LABELS = bool("zw.labels", "Nombres cuando amaina", C_HOME, ZWG, true)
+    val ZW_CALM = num("zw.calm", "El viento amaina tras", C_HOME, ZWG, 3f, 20f, 8f, " s")
     private const val DG = "Puntos de página"
     val D_SHOW = bool("dots.show", "Mostrar indicador de páginas", C_HOME, DG, true)
     val D_STYLE = choice("dots.style", "Estilo", C_HOME, DG, arrayOf("Puntos", "Líneas", "Cápsula activa", "Números", "Píldora One UI"), 4)

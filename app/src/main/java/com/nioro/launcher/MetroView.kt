@@ -105,8 +105,8 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
         private val MARKS = Regex("\\p{Mn}+")
 
         private const val FLIP_MS = 820f
-        private const val TURN_MS = 240f
-        private const val TURN_SPREAD = 190f
+        private const val TURN_MS = 300f
+        private const val TURN_SPREAD = 240f
     }
 
     // ---------------------------------------------------------------- Datos
@@ -455,15 +455,13 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
         val light = bgMode() == 1 && isAttachedToWindow
         try {
             if (Build.VERSION.SDK_INT >= 30) {
-                act.window.insetsController?.setSystemBarsAppearance(
-                    if (light) WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS else 0,
-                    WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
-                )
+                val both = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+                act.window.insetsController?.setSystemBarsAppearance(if (light) both else 0, both)
             } else {
                 val dv = act.window.decorView
                 @Suppress("DEPRECATION")
-                dv.systemUiVisibility = if (light) dv.systemUiVisibility or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
-                else dv.systemUiVisibility and View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv()
+                val f = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+                dv.systemUiVisibility = if (light) dv.systemUiVisibility or f else dv.systemUiVisibility and f.inv()
             }
         } catch (t: Throwable) {
         }
@@ -482,7 +480,9 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
         val act = context as? Activity
         if (act != null && bgMode() == 1) {
             try {
-                if (Build.VERSION.SDK_INT >= 30) act.window.insetsController?.setSystemBarsAppearance(0, WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS)
+                if (Build.VERSION.SDK_INT >= 30) act.window.insetsController?.setSystemBarsAppearance(
+                    0, WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+                )
             } catch (t: Throwable) {
             }
         }
@@ -661,8 +661,9 @@ class MetroView(ctx: Context) : HomeModeView(ctx) {
         tileP.alpha = 255
         val w = width.toFloat()
         // fuera de la zona de los mosaicos (barra de estado y, sin dock, la parte de abajo)
-        c.drawRect(0f, 0f, w, insetTop, tileP)
-        if (ScreenModes.dockOff()) c.drawRect(0f, height - insetBottom, w, height.toFloat(), tileP)
+        // se solapan 2 px con la zona de los mosaicos: sin rendija entre los dos rellenos
+        c.drawRect(0f, 0f, w, insetTop + 2f, tileP)
+        if (ScreenModes.dockOff()) c.drawRect(0f, height - insetBottom - 2f, w, height.toFloat(), tileP)
     }
 
     override fun onFrame(dt: Float): Boolean {
